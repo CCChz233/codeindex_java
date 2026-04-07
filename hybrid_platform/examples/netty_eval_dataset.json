@@ -1,0 +1,46 @@
+{
+  "note": "query 为「类名/路径片段 + 方法名」等可出现在 symbol_id 中的词项（空格分词），与 structure 检索的 symbol_id+display_name 匹配一致。无 embedding 时 hybrid 仍以 chunk 为主，评 symbol 请用 --mode structure。",
+  "samples": [
+    {
+      "query": "DefaultChannelPipeline addLast",
+      "relevant_ids": [
+        "semanticdb maven maven/io.netty/netty-transport 4.2.11.Final-SNAPSHOT io/netty/channel/DefaultChannelPipeline#addLast().",
+        "semanticdb maven maven/io.netty/netty-transport 4.2.11.Final-SNAPSHOT io/netty/channel/DefaultChannelPipeline#addLast(+1)."
+      ]
+    },
+    {
+      "query": "AbstractByteBuf readBytes",
+      "relevant_ids": [
+        "semanticdb maven maven/io.netty/netty-buffer 4.2.11.Final-SNAPSHOT io/netty/buffer/AbstractByteBuf#readBytes().",
+        "semanticdb maven maven/io.netty/netty-buffer 4.2.11.Final-SNAPSHOT io/netty/buffer/AbstractByteBuf#readBytes(+1).",
+        "semanticdb maven maven/io.netty/netty-buffer 4.2.11.Final-SNAPSHOT io/netty/buffer/AbstractByteBuf#readBytes(+2)."
+      ]
+    },
+    {
+      "query": "DefaultChannelPipeline addFirst",
+      "relevant_ids": [
+        "semanticdb maven maven/io.netty/netty-transport 4.2.11.Final-SNAPSHOT io/netty/channel/DefaultChannelPipeline#addFirst().",
+        "semanticdb maven maven/io.netty/netty-transport 4.2.11.Final-SNAPSHOT io/netty/channel/DefaultChannelPipeline#addFirst(+1)."
+      ]
+    },
+    {
+      "query": "PooledByteBuf readBytes",
+      "relevant_ids": [
+        "semanticdb maven maven/io.netty/netty-buffer 4.2.11.Final-SNAPSHOT io/netty/buffer/PooledByteBuf#readBytes().",
+        "semanticdb maven maven/io.netty/netty-buffer 4.2.11.Final-SNAPSHOT io/netty/buffer/PooledByteBuf#readBytes(+1)."
+      ]
+    },
+    {
+      "query": "EmbeddedEventLoop execute",
+      "relevant_ids": [
+        "semanticdb maven maven/io.netty/netty-transport 4.2.11.Final-SNAPSHOT io/netty/channel/embedded/EmbeddedEventLoop#execute()."
+      ]
+    },
+    {
+      "query": "ManualIoEventLoop execute",
+      "relevant_ids": [
+        "semanticdb maven maven/io.netty/netty-transport 4.2.11.Final-SNAPSHOT io/netty/channel/ManualIoEventLoop#execute()."
+      ]
+    }
+  ]
+}

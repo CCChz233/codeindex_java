@@ -1,0 +1,59 @@
+{
+  "note": "基于 find_entity(type,name,match,package_contains) 的 ground truth；指标与 eval 相同（recall@k/MRR/nDCG@10）。",
+  "samples": [
+    {
+      "entity_query": { "type": "class", "name": "AbstractByteBuf", "match": "exact" },
+      "relevant_ids": [
+        "semanticdb maven maven/io.netty/netty-buffer 4.2.11.Final-SNAPSHOT io/netty/buffer/AbstractByteBuf#"
+      ]
+    },
+    {
+      "entity_query": { "type": "class", "name": "DefaultChannelPipeline", "match": "exact" },
+      "relevant_ids": [
+        "semanticdb maven maven/io.netty/netty-transport 4.2.11.Final-SNAPSHOT io/netty/channel/DefaultChannelPipeline#"
+      ]
+    },
+    {
+      "entity_query": { "type": "interface", "name": "Channel", "match": "exact" },
+      "relevant_ids": [
+        "semanticdb maven maven/io.netty/netty-transport 4.2.11.Final-SNAPSHOT io/netty/channel/Channel#"
+      ]
+    },
+    {
+      "entity_query": {
+        "type": "method",
+        "name": "addLast",
+        "match": "exact",
+        "package_contains": "DefaultChannelPipeline"
+      },
+      "relevant_ids": [
+        "semanticdb maven maven/io.netty/netty-transport 4.2.11.Final-SNAPSHOT io/netty/channel/DefaultChannelPipeline#addLast().",
+        "semanticdb maven maven/io.netty/netty-transport 4.2.11.Final-SNAPSHOT io/netty/channel/DefaultChannelPipeline#addLast(+1)."
+      ]
+    },
+    {
+      "entity_query": {
+        "type": "method",
+        "name": "readBytes",
+        "match": "exact",
+        "package_contains": "AbstractByteBuf#"
+      },
+      "relevant_ids": [
+        "semanticdb maven maven/io.netty/netty-buffer 4.2.11.Final-SNAPSHOT io/netty/buffer/AbstractByteBuf#readBytes().",
+        "semanticdb maven maven/io.netty/netty-buffer 4.2.11.Final-SNAPSHOT io/netty/buffer/AbstractByteBuf#readBytes(+1).",
+        "semanticdb maven maven/io.netty/netty-buffer 4.2.11.Final-SNAPSHOT io/netty/buffer/AbstractByteBuf#readBytes(+2)."
+      ]
+    },
+    {
+      "entity_query": {
+        "type": "class",
+        "name": "EmbeddedEventLoop",
+        "match": "exact",
+        "package_contains": "embedded"
+      },
+      "relevant_ids": [
+        "semanticdb maven maven/io.netty/netty-transport 4.2.11.Final-SNAPSHOT io/netty/channel/embedded/EmbeddedEventLoop#"
+      ]
+    }
+  ]
+}

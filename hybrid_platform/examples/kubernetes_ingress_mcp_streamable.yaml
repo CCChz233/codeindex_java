@@ -1,0 +1,32 @@
+# Kubernetes：Ingress-NGINX 将公网 TLS 转发到内网 MCP Service。
+# 按需修改 host、secretName、service 名与端口；路径须与 HYBRID_MCP_PATH 一致（默认 /mcp）。
+# 文档：docs/deploy_public_mcp_edge_proxy.md
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hybrid-codeindex-mcp
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    # 若使用客户端证书（mTLS），在控制器层另行配置 auth-tls-secret
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - codeindex.example.com
+      secretName: codeindex-tls
+  rules:
+    - host: codeindex.example.com
+      http:
+        paths:
+          - path: /mcp
+            pathType: Prefix
+            backend:
+              service:
+                name: hybrid-mcp
+                port:
+                  number: 8765

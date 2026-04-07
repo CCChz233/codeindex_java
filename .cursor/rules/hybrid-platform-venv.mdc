@@ -1,0 +1,32 @@
+---
+description: 在本仓库运行 hybrid_platform 的 Python/pip/CLI 时使用 myenv 虚拟环境
+alwaysApply: true
+---
+
+# hybrid_platform 虚拟环境
+
+在 `codeindex_java` 仓库中执行 **Python、pip、或 `python -m hybrid_platform.cli`** 时，必须使用项目内虚拟环境，不要用未激活的 conda/base `python`。
+
+**推荐（仓库根目录 `codeindex_java`）：**
+
+```bash
+source hybrid_platform/myenv/bin/activate
+cd hybrid_platform
+python -m hybrid_platform.cli ...
+```
+
+**或直接指定解释器（无需 activate）：**
+
+```bash
+/data1/qadong/codeindex_java/hybrid_platform/myenv/bin/python -m hybrid_platform.cli ...
+```
+
+在 `hybrid_platform` 子目录内工作时，仍用上述路径或先 `source ../myenv/bin/activate`（相对路径以当前工作目录为准）。
+
+**安装依赖**：若 `myenv` 是从其他机器/路径复制来的，`bin/pip` 等脚本的 shebang 可能仍指向旧路径，包会装错位置。请用：
+
+```bash
+hybrid_platform/myenv/bin/python -m pip install -r requirements.txt
+```
+
+**已修复**：`myenv/bin/activate`（及 `activate.fish`）已改为按脚本位置自动解析 `VIRTUAL_ENV`，在 `codeindex_java` 下 `source hybrid_platform/myenv/bin/activate` 会指向本仓库的 `myenv`。`activate.csh` 仍使用本仓库固定绝对路径。

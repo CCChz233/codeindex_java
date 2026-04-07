@@ -1,0 +1,12 @@
+{
+  "samples": [
+    {
+      "query": "add function definition",
+      "relevant_ids": ["scip-cpp demo add()."]
+    },
+    {
+      "query": "parse command line options",
+      "relevant_ids": ["scip-cpp demo parse_options()."]
+    }
+  ]
+}

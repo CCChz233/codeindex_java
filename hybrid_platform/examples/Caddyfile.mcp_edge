@@ -1,0 +1,25 @@
+# Caddy：自动 HTTPS + 反向代理到内网 MCP（Streamable HTTP）。
+# 用法：caddy run --config /path/to/Caddyfile.mcp_edge
+# 文档：docs/deploy_public_mcp_edge_proxy.md
+
+codeindex.example.com {
+	# 内网 Uvicorn；与 HYBRID_MCP_PORT 一致
+	reverse_proxy /mcp* 127.0.0.1:8765 {
+		# 长连接 / SSE：减少缓冲（Caddy 2）；更长空闲超时见 Caddy 全局配置
+		flush_interval -1
+		transport http {
+			dial_timeout 60s
+		}
+		header_up Host {host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-For {remote_host}
+		# Authorization 默认透传
+	}
+}
+
+# 多库示例：子域各指向不同端口
+# jdk.codeindex.example.com {
+# 	reverse_proxy /mcp* 127.0.0.1:8766 {
+# 		flush_interval -1
+# 	}
+# }

@@ -1,0 +1,13 @@
+mcp>=1.0
+uvicorn>=0.30
+pytest>=8.0
+litellm
+lancedb
+pyarrow
+llama-index-core
+llama-index-embeddings-openai
+llama-index-embeddings-voyageai
+tree-sitter
+tree-sitter-java
+voyageai
+tqdm

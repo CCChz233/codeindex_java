@@ -1,0 +1,10 @@
+{"type":"document","relative_path":"src/main.cc","language":"cpp","occurrence_count":5,"content":"#include <iostream>\nint add(int a, int b) { return a + b; }\nint main() {\n  std::cout << add(1, 2) << std::endl;\n  return 0;\n}\n"}
+{"type":"symbol","symbol_id":"scip-cpp demo add().","display_name":"add","kind":"function","package":"demo","signature_hash":"sig_add"}
+{"type":"symbol","symbol_id":"scip-cpp demo main().","display_name":"main","kind":"function","package":"demo","signature_hash":"sig_main"}
+{"type":"occurrence","relative_path":"src/main.cc","symbol_id":"scip-cpp demo add().","range":[1,4,1,7],"role":"definition"}
+{"type":"occurrence","relative_path":"src/main.cc","symbol_id":"scip-cpp demo main().","range":[2,4,2,8],"role":"definition"}
+{"type":"occurrence","relative_path":"src/main.cc","symbol_id":"scip-cpp demo add().","range":[3,15,3,18],"role":"reference"}
+{"type":"relation","from_symbol":"scip-cpp demo main().","to_symbol":"scip-cpp demo add().","relation_type":"calls","confidence":1.0,"evidence_relative_path":"src/main.cc"}
+{"type":"document","relative_path":"src/options.cc","language":"cpp","occurrence_count":3,"content":"#include <string>\nstd::string parse_options(int argc, char** argv) {\n  if (argc > 1) return argv[1];\n  return \"\";\n}\n"}
+{"type":"symbol","symbol_id":"scip-cpp demo parse_options().","display_name":"parse_options","kind":"function","package":"demo","signature_hash":"sig_parse_options"}
+{"type":"occurrence","relative_path":"src/options.cc","symbol_id":"scip-cpp demo parse_options().","range":[1,12,1,25],"role":"definition"}

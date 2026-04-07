@@ -1,0 +1,19 @@
+{
+  "input": "/data1/qadong/codeindex_java/hybrid_platform/examples/spring_semantic_queries.jsonl",
+  "output": "/data1/qadong/codeindex_java/hybrid_platform/examples/spring_semantic_queries.pruned.tmp.jsonl",
+  "repo": "spring-framework",
+  "commit": "8f64480c9f91aa4f8dcf56c53e5e967a1a65d0b8",
+  "kept": 112,
+  "dropped": 9,
+  "dropped_line_numbers": [
+    1,
+    3,
+    18,
+    62,
+    63,
+    73,
+    81,
+    83,
+    104
+  ]
+}

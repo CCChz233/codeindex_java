@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "slug": "ls1intum_Artemis_7364749a8de08befd5f96e9dfecf6d13e241944a",
+      "repo": "ls1intum/Artemis",
+      "commit": "7364749a8de08befd5f96e9dfecf6d13e241944a",
+      "db_path": "/data1/qadong/codeindex_java/hybrid_platform/var/hybrid_indices/ls1intum_Artemis_7364749a8de08befd5f96e9dfecf6d13e241944a.db",
+      "mcp_path": "/mcp/ls1intum_Artemis_7364749a8de08befd5f96e9dfecf6d13e241944a",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/config/default_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-07T05:39:09.458760+00:00"
+    }
+  ]
+}

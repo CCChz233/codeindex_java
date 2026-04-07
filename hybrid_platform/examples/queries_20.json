@@ -1,0 +1,24 @@
+{
+  "queries": [
+    "add",
+    "main",
+    "parse_options",
+    "function definition add",
+    "parse command line options",
+    "where is add referenced",
+    "who calls add",
+    "function that returns argv",
+    "options parser",
+    "stdio output",
+    "symbol main",
+    "definition of parse_options",
+    "call graph for main",
+    "source file src/main.cc",
+    "source file src/options.cc",
+    "incremental index baseline",
+    "semantic retrieval for options",
+    "hybrid query add 1 2",
+    "exact symbol parse_options",
+    "references of add"
+  ]
+}

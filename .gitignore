@@ -1,0 +1,60 @@
+# --- 索引与数据库（体积大）---
+**/*.db
+**/*.db-journal
+**/*.db-wal
+**/*.db-shm
+
+# 默认索引输出目录（slug.db）
+hybrid_platform/var/hybrid_indices/
+
+# MCP 网关：nginx prefix、pid、后端日志
+hybrid_platform/var/mcp_gateway/
+
+# scip-java 等生成的 SCIP（若在仓库或 worktree 内误提交）
+*.scip
+**/index.scip
+
+# 若希望 metadata 仅本机、不提交，取消下一行注释
+# hybrid_platform/var/index_metadata.json
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# --- 虚拟环境（勿提交到 GitHub；本地用 myenv/bin/python -m pip install -r requirements.txt 重建）---
+hybrid_platform/myenv/
+.venv/
+venv/
+
+# --- IDE / 系统 ---
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# --- Java / Maven 构建输出 ---
+**/target/
+
+# --- 其它常见大文件 / 缓存 ---
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.lance
+*.arrow
+*.parquet
+.huggingface/
+.cache/

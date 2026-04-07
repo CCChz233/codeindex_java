@@ -1,0 +1,120 @@
+{
+  "meta": {
+    "description": "Spring Framework 6.2.10 index (repo=spring-framework): agent scenarios and expected outputs; validates index only, not local source tree. Source clone often under /data1/qadong or /data/qadong.",
+    "repo": "spring-framework",
+    "commit": "8f64480c9f91aa4f8dcf56c53e5e967a1a65d0b8",
+    "default_db_paths": [
+      "/data1/qadong/spring_v6.2.10.db",
+      "/data/qadong/spring_v6.2.10.db"
+    ]
+  },
+  "symbols": {
+    "application_context": "semanticdb maven maven/org.springframework/spring-context 6.2.10 org/springframework/context/ApplicationContext#",
+    "bean_factory": "semanticdb maven maven/org.springframework/spring-beans 6.2.10 org/springframework/beans/factory/BeanFactory#",
+    "configuration_annotation": "semanticdb maven maven/org.springframework/spring-context 6.2.10 org/springframework/context/annotation/Configuration#",
+    "rest_controller_annotation": "semanticdb maven maven/org.springframework/spring-web 6.2.10 org/springframework/web/bind/annotation/RestController#"
+  },
+  "paths": {
+    "application_context_java": "org/springframework/context/ApplicationContext.java"
+  },
+  "scenarios": [
+    {
+      "id": "spring_find_interface_application_context_exact",
+      "intent": "Exact find_symbol for interface ApplicationContext (then graph/def follow-ups)",
+      "tool": "find_symbol",
+      "args": {
+        "entity_type": "interface",
+        "name": "ApplicationContext",
+        "match": "exact",
+        "limit": 10
+      },
+      "expect": {
+        "ok": true,
+        "min_entity_count": 1,
+        "entity_symbol_ids_contain": [
+          "semanticdb maven maven/org.springframework/spring-context 6.2.10 org/springframework/context/ApplicationContext#"
+        ]
+      }
+    },
+    {
+      "id": "spring_find_type_bean_factory_exact",
+      "intent": "find_symbol with entity_type=type for BeanFactory",
+      "tool": "find_symbol",
+      "args": {
+        "entity_type": "type",
+        "name": "BeanFactory",
+        "match": "exact",
+        "limit": 10
+      },
+      "expect": {
+        "ok": true,
+        "min_entity_count": 1,
+        "entity_symbol_ids_contain": [
+          "semanticdb maven maven/org.springframework/spring-beans 6.2.10 org/springframework/beans/factory/BeanFactory#"
+        ]
+      }
+    },
+    {
+      "id": "spring_query_hybrid_application_context_symbols",
+      "intent": "hybrid search ApplicationContext → top_k includes related symbols (may be AbstractApplicationContext, not only the interface)",
+      "tool": "semantic_query",
+      "args": {
+        "query": "ApplicationContext",
+        "mode": "hybrid",
+        "top_k": 15
+      },
+      "expect": {
+        "ok": true,
+        "min_results": 1,
+        "any_result_id_contains": "ApplicationContext"
+      }
+    },
+    {
+      "id": "spring_query_hybrid_application_context_hits_chunk_or_symbol",
+      "intent": "hybrid search ApplicationContext → chunk+symbol; path or id related to context package (may omit ApplicationContext.java in top_k)",
+      "tool": "semantic_query",
+      "args": {
+        "query": "ApplicationContext",
+        "mode": "hybrid",
+        "top_k": 20
+      },
+      "expect": {
+        "ok": true,
+        "min_results": 2,
+        "result_types_contain": ["chunk", "symbol"],
+        "any_payload_path_contains": "org/springframework/context",
+        "any_result_id_contains": "ApplicationContext"
+      }
+    },
+    {
+      "id": "spring_symbol_graph_def_of_application_context",
+      "intent": "Where is ApplicationContext defined → def_of",
+      "tool": "symbol_graph",
+      "args": {
+        "op": "def_of",
+        "symbol_id": "semanticdb maven maven/org.springframework/spring-context 6.2.10 org/springframework/context/ApplicationContext#",
+        "top_k": 5
+      },
+      "expect": {
+        "ok": true,
+        "min_results": 1,
+        "any_payload_path_contains": "org/springframework/context/ApplicationContext.java"
+      }
+    },
+    {
+      "id": "spring_symbol_graph_refs_of_bean_factory_nonempty",
+      "intent": "Who references BeanFactory → refs_of (many refs; expect non-empty reasonable set)",
+      "tool": "symbol_graph",
+      "args": {
+        "op": "refs_of",
+        "symbol_id": "semanticdb maven maven/org.springframework/spring-beans 6.2.10 org/springframework/beans/factory/BeanFactory#",
+        "top_k": 20
+      },
+      "expect": {
+        "ok": true,
+        "min_results": 5,
+        "any_result_id_contains": "BeanFactory"
+      }
+    }
+  ]
+}
