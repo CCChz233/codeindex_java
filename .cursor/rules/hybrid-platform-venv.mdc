@@ -7,6 +7,9 @@ alwaysApply: true
 
 在 `codeindex_java` 仓库中执行 **Python、pip、或 `python -m hybrid_platform.cli`** 时，必须使用项目内虚拟环境，不要用未激活的 conda/base `python`。
 
+**从 Git 克隆后**：`myenv` 不在仓库内（`.gitignore`），请在 `hybrid_platform` 下执行  
+`python3 -m venv myenv && myenv/bin/python -m pip install -r requirements.txt`，再使用下文路径。
+
 **推荐（仓库根目录 `codeindex_java`）：**
 
 ```bash
