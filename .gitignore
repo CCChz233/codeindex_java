@@ -10,6 +10,9 @@ hybrid_platform/var/hybrid_indices/
 # MCP 网关：nginx prefix、pid、后端日志
 hybrid_platform/var/mcp_gateway/
 
+# Java 测评准备：targets/routes/build logs/worktrees 索引辅助文件
+hybrid_platform/var/java_eval/
+
 # scip-java 等生成的 SCIP（若在仓库或 worktree 内误提交）
 *.scip
 **/index.scip
@@ -24,6 +27,8 @@ __pycache__/
 *.so
 .Python
 .pytest_cache/
+# pytest 在部分环境下会把 basetemp 写到工作区（例如 hybrid_platform/pytest-of-root）
+hybrid_platform/pytest-of-root/
 .mypy_cache/
 .ruff_cache/
 *.egg-info/

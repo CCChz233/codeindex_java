@@ -47,6 +47,25 @@ class JavaIndexer:
     def __init__(self, request: JavaIndexRequest) -> None:
         self.request = request
 
+    @staticmethod
+    def _failure_detail(stdout: str, stderr: str, returncode: int) -> str:
+        stderr_lines = [line for line in (stderr or "").splitlines() if line.strip()]
+        useful_stderr = [
+            line for line in stderr_lines if not line.startswith("Picked up JAVA_TOOL_OPTIONS")
+        ]
+        stdout_lines = [line for line in (stdout or "").splitlines() if line.strip()]
+
+        if stdout_lines:
+            tail = "\n".join(stdout_lines[-40:])
+            if useful_stderr:
+                err_tail = "\n".join(useful_stderr[-10:])
+                return f"{err_tail}\n--- stdout tail ---\n{tail}".strip()
+            return tail
+        if useful_stderr:
+            return "\n".join(useful_stderr[-40:]).strip()
+        fallback = (stderr or "").strip() or (stdout or "").strip()
+        return fallback or f"exit={returncode}"
+
     def _base_command(self) -> list[str]:
         cmd = shlex.split(self.request.scip_java_cmd.strip())
         if not cmd:
@@ -96,9 +115,7 @@ class JavaIndexer:
         )
         elapsed_ms = int((time.time() - start) * 1000)
         if proc.returncode != 0:
-            stderr = (proc.stderr or "").strip()
-            stdout = (proc.stdout or "").strip()
-            detail = stderr or stdout or f"exit={proc.returncode}"
+            detail = self._failure_detail(proc.stdout, proc.stderr, proc.returncode)
             raise RuntimeError(f"scip-java 执行失败: {detail}")
         output_path = Path(self.request.output_path)
         if not output_path.is_absolute():

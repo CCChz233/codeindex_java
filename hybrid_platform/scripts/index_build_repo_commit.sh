@@ -10,10 +10,11 @@
 #   --output-dir PATH   存放 *.db，默认 <仓库>/var/hybrid_indices
 #   --build-tool TOOL   maven 或 gradle
 #   --java-home PATH    设置 JAVA_HOME，并把 $JAVA_HOME/bin prepend 到 PATH（Maven/Gradle/scip-java 用此 JDK）
+#   --prebuilt-scip PATH  跳过 index-java，直接 ingest 该 .scip（Docker 内编译产出后宿主机续跑）
 #   -h, --help
 #
 # 环境变量备选：HYBRID_CONFIG_PATH、HYBRID_REPO_NAME、HYBRID_COMMIT_SHA、HYBRID_REPO_ROOT、
-#   HYBRID_INDEX_DIR、BUILD_TOOL、SKIP_CHUNK、SKIP_EMBED、SKIP_CODE_GRAPH
+#   HYBRID_INDEX_DIR、BUILD_TOOL、HYBRID_PREBUILT_SCIP、SKIP_CHUNK、SKIP_EMBED、SKIP_CODE_GRAPH
 #
 # index-java 的编译参数放在单独的 -- 之后：
 #   ./scripts/index_build_repo_commit.sh --config ./config/default_config.json \
@@ -40,9 +41,10 @@ index_build_repo_commit.sh — Java 一键构建索引（index-java → build-co
   --output-dir PATH    存放 *.db（默认 hybrid_platform/var/hybrid_indices）
   --build-tool TOOL    maven 或 gradle
   --java-home PATH     指定 JDK（如 Java 21：/usr/lib/jvm/java-21-openjdk-amd64）；等价于事先 export JAVA_HOME
+  --prebuilt-scip PATH 已有 index.scip 时跳过 scip-java，仅跑 ingest 及后续（也可用 HYBRID_PREBUILT_SCIP）
 
 环境变量备选：CONFIG_PATH、REPO_NAME、COMMIT_SHA、REPO_ROOT、OUTPUT_DIR、HYBRID_INDEX_DIR、
-  BUILD_TOOL、JAVA_HOME、SKIP_CHUNK、SKIP_EMBED、SKIP_CODE_GRAPH
+  BUILD_TOOL、JAVA_HOME、HYBRID_PREBUILT_SCIP、SKIP_CHUNK、SKIP_EMBED、SKIP_CODE_GRAPH
 
 index-java 编译参数放在单独的 -- 之后，例如：-- -DskipTests
 
@@ -50,6 +52,10 @@ index-java 编译参数放在单独的 -- 之后，例如：-- -DskipTests
   ./scripts/index_build_repo_commit.sh --config ./config/default_config.json \
     --repo-name spring-projects/spring-framework --commit abcdef0123456789abcdef0123456789abcdef01 \
     --repo-root /path/to/spring-framework --build-tool maven -- -DskipTests
+
+  ./scripts/index_build_repo_commit.sh --config ./config/default_config.json \
+    --repo-name my/repo --commit abcdef0123456789abcdef0123456789abcdef01 \
+    --repo-root /path/to/repo --prebuilt-scip /path/to/index.scip
 EOF
 }
 
@@ -60,6 +66,7 @@ REPO_ROOT_CLI=""
 OUTPUT_DIR_CLI=""
 BUILD_TOOL_CLI=""
 JAVA_HOME_CLI=""
+PREBUILT_SCIP_CLI=""
 
 EXTRA_JAVA=()
 while [[ $# -gt 0 ]]; do
@@ -92,6 +99,10 @@ while [[ $# -gt 0 ]]; do
       JAVA_HOME_CLI="${2:?--java-home requires a path}"
       shift 2
       ;;
+    --prebuilt-scip)
+      PREBUILT_SCIP_CLI="${2:?--prebuilt-scip requires a path}"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -117,6 +128,11 @@ if [[ -n "${BUILD_TOOL_CLI}" ]]; then
   BUILD_TOOL="$BUILD_TOOL_CLI"
 fi
 
+PREBUILT_SCIP="${PREBUILT_SCIP_CLI:-${HYBRID_PREBUILT_SCIP:-}}"
+if [[ -n "$PREBUILT_SCIP" ]] && [[ ${#EXTRA_JAVA[@]} -gt 0 ]]; then
+  echo "[index_build_repo_commit] WARN: --prebuilt-scip 已设置，忽略 index-java 的额外编译参数（-- 之后）" >&2
+fi
+
 # scip-java / Maven / Gradle 要求 JAVA_HOME 指向「含 bin/java」的 JDK 根目录；无效路径会导致子进程报 invalid directory
 _jdk_home_from_path_java() {
   local j
@@ -131,6 +147,7 @@ _jdk_home_from_path_java() {
 }
 
 JH="${JAVA_HOME_CLI:-${JAVA_HOME:-}}"
+if [[ -z "$PREBUILT_SCIP" ]]; then
 if [[ -n "$JH" ]]; then
   export JAVA_HOME="$JH"
   export PATH="$JAVA_HOME/bin:$PATH"
@@ -149,6 +166,9 @@ if [[ -n "$JH" ]] && [[ ! -x "$JAVA_HOME/bin/java" ]]; then
 fi
 if [[ -n "${JAVA_HOME:-}" ]]; then
   echo "[index_build_repo_commit] JAVA_HOME=$JAVA_HOME java=$(command -v java || true) ($("$JAVA_HOME/bin/java" -version 2>&1 | head -1 || true))" >&2
+fi
+else
+  echo "[index_build_repo_commit] prebuilt-scip mode: skip host JAVA_HOME check (ingest/chunk/embed 仅需 Python)" >&2
 fi
 
 if [[ -z "$CONFIG_PATH" || -z "$REPO_NAME" || -z "$COMMIT_SHA" || -z "$REPO_ROOT" ]]; then
@@ -185,6 +205,20 @@ run_stage() {
   echo ">>> PIPELINE_STAGE_OK: $stage" >&2
 }
 
+if [[ -n "$PREBUILT_SCIP" ]]; then
+  if [[ ! -f "$PREBUILT_SCIP" ]]; then
+    echo "[index_build_repo_commit] ERROR: --prebuilt-scip 不是可读文件: $PREBUILT_SCIP" >&2
+    exit 2
+  fi
+  if command -v realpath >/dev/null 2>&1; then
+    PREBUILT_SCIP="$(realpath "$PREBUILT_SCIP")"
+  else
+    PREBUILT_SCIP="$(cd "$(dirname "$PREBUILT_SCIP")" && pwd)/$(basename "$PREBUILT_SCIP")"
+  fi
+  echo "[index_build_repo_commit] using prebuilt SCIP: $PREBUILT_SCIP" >&2
+  run_stage ingest ingest --repo "$REPO_NAME" --commit "$COMMIT_SHA" --db "$DB_PATH" \
+    --input "$PREBUILT_SCIP" --source-root "$REPO_ROOT"
+else
 IDX_JAVA_ARGS=(index-java --repo-root "$REPO_ROOT" --repo "$REPO_NAME" --commit "$COMMIT_SHA" --db "$DB_PATH")
 if [[ -n "${BUILD_TOOL:-}" ]]; then
   IDX_JAVA_ARGS+=(--build-tool "$BUILD_TOOL")
@@ -195,6 +229,7 @@ if [[ ${#EXTRA_JAVA[@]} -gt 0 ]]; then
   IDX_JAVA_ARGS+=("${EXTRA_JAVA[@]}")
 fi
 run_stage index-java "${IDX_JAVA_ARGS[@]}"
+fi
 
 if [[ -z "${SKIP_CODE_GRAPH:-}" ]]; then
   run_stage build-code-graph build-code-graph --db "$DB_PATH" --repo "$REPO_NAME" --commit "$COMMIT_SHA"

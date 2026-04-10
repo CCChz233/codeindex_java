@@ -19,8 +19,8 @@ repo_commit_to_index.sh — clone → 全量索引 → 注册 index_metadata.jso
 必填：--config --repo-name --commit --dest
 未加 --skip-clone 时还需：--git-url
 
-可选：--output-dir --build-tool --java-home --recurse-submodules --clone-shallow --skip-clone
-Maven/Gradle 参数：-- 之后（Gradle 慎用 -x test，见文档）
+可选：--output-dir --build-tool --java-home --prebuilt-scip PATH --recurse-submodules --clone-shallow --skip-clone
+Maven/Gradle 参数：-- 之后（Gradle 慎用 -x test，见文档）；若指定 --prebuilt-scip 则不再调用宿主机 scip-java
 
 完成后请执行：./scripts/start_mcp_gateway_8765.sh
 EOF
@@ -34,6 +34,7 @@ GIT_URL_CLI=""
 OUTPUT_DIR_CLI=""
 BUILD_TOOL_CLI=""
 JAVA_HOME_CLI=""
+PREBUILT_SCIP_CLI=""
 SKIP_CLONE=0
 RECURSE=0
 CLONE_SHALLOW=0
@@ -49,6 +50,7 @@ while [[ $# -gt 0 ]]; do
     --output-dir) OUTPUT_DIR_CLI="${2:?}"; shift 2 ;;
     --build-tool) BUILD_TOOL_CLI="${2:?}"; shift 2 ;;
     --java-home) JAVA_HOME_CLI="${2:?}"; shift 2 ;;
+    --prebuilt-scip) PREBUILT_SCIP_CLI="${2:?}"; shift 2 ;;
     --recurse-submodules) RECURSE=1; shift ;;
     --clone-shallow) CLONE_SHALLOW=1; shift ;;
     --skip-clone) SKIP_CLONE=1; shift ;;
@@ -106,12 +108,17 @@ BUILD_CMD=(bash "$SCRIPT_DIR/index_build_repo_commit.sh" --config "$CONFIG_PATH"
 [[ -n "$OUTPUT_DIR" ]] && BUILD_CMD+=(--output-dir "$OUTPUT_DIR")
 [[ -n "$BUILD_TOOL_CLI" ]] && BUILD_CMD+=(--build-tool "$BUILD_TOOL_CLI")
 [[ -n "$JAVA_HOME_CLI" ]] && BUILD_CMD+=(--java-home "$JAVA_HOME_CLI")
+[[ -n "$PREBUILT_SCIP_CLI" ]] && BUILD_CMD+=(--prebuilt-scip "$PREBUILT_SCIP_CLI")
 if [[ ${#EXTRA_JAVA[@]} -gt 0 ]]; then
   BUILD_CMD+=(--)
   BUILD_CMD+=("${EXTRA_JAVA[@]}")
 fi
 
-echo ">>> PIPELINE_PHASE: index_build (index-java → build-code-graph → chunk → embed)" >&2
+if [[ -n "${PREBUILT_SCIP_CLI:-}" ]]; then
+  echo ">>> PIPELINE_PHASE: index_build (ingest from prebuilt-scip → build-code-graph → chunk → embed)" >&2
+else
+  echo ">>> PIPELINE_PHASE: index_build (index-java → build-code-graph → chunk → embed)" >&2
+fi
 set +e
 "${BUILD_CMD[@]}"
 rc=$?

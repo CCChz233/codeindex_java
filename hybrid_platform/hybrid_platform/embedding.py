@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from threading import BoundedSemaphore, Lock
-from typing import Any, Callable, Dict, List, Sequence
+from typing import Any, Callable, Dict, Iterator, List, Sequence
 
 from .models import Chunk
 from .storage import SqliteStore
@@ -421,10 +421,14 @@ def _get_java_parser() -> object | None:
     return parser
 
 
-def _walk_tree_sitter(node: object) -> Sequence[object]:
-    yield node
-    for child in getattr(node, "children", []):
-        yield from _walk_tree_sitter(child)
+def _walk_tree_sitter(node: object) -> Iterator[object]:
+    stack: list[object] = [node]
+    while stack:
+        n = stack.pop()
+        yield n
+        ch = getattr(n, "children", []) or []
+        for child in reversed(ch):
+            stack.append(child)
 
 
 def _normalize_java_kind(kind: str) -> set[str]:
