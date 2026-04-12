@@ -12,6 +12,8 @@
 - 样本路由映射 `sample_id -> worktree/db/mcp`
 - 批量构建与校验报告
 
+如果你是在固定服务器上由远程 agent 执行这些步骤，直接看 [server_agent_runbook.md](./server_agent_runbook.md)。那份文档按 `/data1/qadong/codeindex_java` 路径给出了服务器侧拉代码、conda、JDK、`scip-java`、配置文件、manifest 建索引与校验的顺序化命令。
+
 ## 1. 入口
 
 统一入口脚本：
