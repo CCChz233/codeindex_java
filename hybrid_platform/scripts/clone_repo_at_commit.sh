@@ -102,7 +102,11 @@ if [[ -d "$DEST/.git" ]] || [[ -f "$DEST/.git" ]]; then
   else
     git -C "$DEST" fetch origin
   fi
-  git -C "$DEST" checkout "${CO_OPTS[@]}" "$COMMIT"
+  if [[ ${#CO_OPTS[@]} -gt 0 ]]; then
+    git -C "$DEST" checkout "${CO_OPTS[@]}" "$COMMIT"
+  else
+    git -C "$DEST" checkout "$COMMIT"
+  fi
 else
   if [[ -d "$DEST" ]] && [[ -n "$(ls -A "$DEST" 2>/dev/null || true)" ]]; then
     echo "Destination exists, is not a git repo, and is not empty: $DEST" >&2
@@ -117,11 +121,23 @@ else
       echo "[clone_repo_at_commit] shallow fetch failed (server may disallow SHA fetch or need full clone). Retry without --shallow." >&2
       exit 1
     fi
-    git -C "$DEST" checkout "${CO_OPTS[@]}" FETCH_HEAD
+    if [[ ${#CO_OPTS[@]} -gt 0 ]]; then
+      git -C "$DEST" checkout "${CO_OPTS[@]}" FETCH_HEAD
+    else
+      git -C "$DEST" checkout FETCH_HEAD
+    fi
   else
     echo "[clone_repo_at_commit] full git clone -> $DEST" >&2
-    git clone "${CLONE_OPTS[@]}" "$GIT_URL" "$DEST"
-    git -C "$DEST" checkout "${CO_OPTS[@]}" "$COMMIT"
+    if [[ ${#CLONE_OPTS[@]} -gt 0 ]]; then
+      git clone "${CLONE_OPTS[@]}" "$GIT_URL" "$DEST"
+    else
+      git clone "$GIT_URL" "$DEST"
+    fi
+    if [[ ${#CO_OPTS[@]} -gt 0 ]]; then
+      git -C "$DEST" checkout "${CO_OPTS[@]}" "$COMMIT"
+    else
+      git -C "$DEST" checkout "$COMMIT"
+    fi
   fi
 fi
 

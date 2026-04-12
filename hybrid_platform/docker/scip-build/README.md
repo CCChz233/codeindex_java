@@ -1,5 +1,9 @@
 # Docker 内仅生成 SCIP
 
+> 当前目录是**开发/过渡方案**，只解决「容器内编译并产出 `.scip`」这一步。
+> 它不会把 `ingest / build-code-graph / chunk / embed / serve / MCP` 一并标准化，因此**不保证跨机器完全一致**。
+> 需要标准化的 Linux/amd64 全容器路径时，请优先使用 [../full-stack/README.md](../full-stack/README.md)。
+
 目标：镜像内只含 **JDK + Maven + Gradle + scip-java**，完成编译并产出 `index.scip`；**ingest / build-code-graph / chunk / embed** 仍在宿主机使用 [hybrid_platform](../../) 的 Python 虚拟环境。
 
 ## 构建镜像

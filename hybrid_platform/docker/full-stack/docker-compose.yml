@@ -1,0 +1,70 @@
+x-indexer-build: &indexer-build
+  context: ../..
+  dockerfile: docker/full-stack/Dockerfile
+  target: indexer
+  args:
+    PYTHON_VERSION: ${PYTHON_VERSION:-3.11}
+    JDK_VERSION: ${JDK_VERSION:-21}
+    SCIP_JAVA_VERSION: ${SCIP_JAVA_VERSION:-0.12.3}
+
+x-runtime-build: &runtime-build
+  context: ../..
+  dockerfile: docker/full-stack/Dockerfile
+  target: runtime
+  args:
+    PYTHON_VERSION: ${PYTHON_VERSION:-3.11}
+
+services:
+  indexer:
+    profiles: ["indexer"]
+    platform: linux/amd64
+    build: *indexer-build
+    environment:
+      INDEX_METADATA_FILE: /data/index_metadata.json
+    volumes:
+      - ${HYBRID_DATA_DIR:-./data}:/data
+      - ${HYBRID_WORKSPACE_DIR:-./workspace}:/workspace
+      - ${HYBRID_CONFIG_FILE:?set HYBRID_CONFIG_FILE}:/config/config.json:ro
+    command:
+      - --repo-name
+      - ${INDEX_REPO_NAME:?set INDEX_REPO_NAME}
+      - --commit
+      - ${INDEX_COMMIT:?set INDEX_COMMIT}
+      - --git-url
+      - ${INDEX_GIT_URL:?set INDEX_GIT_URL}
+      - --config
+      - /config/config.json
+
+  rest:
+    profiles: ["rest"]
+    platform: linux/amd64
+    build: *runtime-build
+    entrypoint: ["/opt/hybrid_platform/docker/full-stack/entrypoints/run_rest.sh"]
+    environment:
+      HYBRID_DB: ${HYBRID_DB:?set HYBRID_DB}
+      HYBRID_CONFIG: /config/config.json
+      HYBRID_ADMIN_TOKEN: ${HYBRID_ADMIN_TOKEN:-}
+    volumes:
+      - ${HYBRID_DATA_DIR:-./data}:/data
+      - ${HYBRID_CONFIG_FILE:?set HYBRID_CONFIG_FILE}:/config/config.json:ro
+    command: ["--host", "0.0.0.0", "--port", "9301"]
+    ports:
+      - "${REST_PORT:-9301}:9301"
+
+  mcp:
+    profiles: ["mcp"]
+    platform: linux/amd64
+    build: *runtime-build
+    entrypoint: ["/opt/hybrid_platform/docker/full-stack/entrypoints/run_mcp.sh"]
+    environment:
+      HYBRID_DB: ${HYBRID_DB:?set HYBRID_DB}
+      HYBRID_CONFIG: /config/config.json
+      HYBRID_MCP_HOST: 0.0.0.0
+      HYBRID_MCP_PORT: 8765
+      HYBRID_MCP_PATH: ${HYBRID_MCP_PATH:-/mcp}
+      HYBRID_MCP_BEARER_TOKEN: ${HYBRID_MCP_BEARER_TOKEN:-}
+    volumes:
+      - ${HYBRID_DATA_DIR:-./data}:/data
+      - ${HYBRID_CONFIG_FILE:?set HYBRID_CONFIG_FILE}:/config/config.json:ro
+    ports:
+      - "${MCP_PORT:-8765}:8765"

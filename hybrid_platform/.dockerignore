@@ -1,0 +1,17 @@
+.git
+.cursor
+.pytest_cache
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+*.db
+*.sqlite
+*.sqlite3
+*.lancedb
+.venv
+venv
+myenv
+var/hybrid_indices
+var/mcp_gateway/runtime
+var/index_metadata.json

@@ -24,6 +24,12 @@ dev = ["pytest>=8.0"]
 testpaths = ["tests"]
 pythonpath = ["."]
 
+[tool.setuptools]
+py-modules = ["scip_pb2"]
+
+[tool.setuptools.packages.find]
+include = ["hybrid_platform*"]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
