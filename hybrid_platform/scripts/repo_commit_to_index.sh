@@ -130,13 +130,14 @@ fi
 
 echo ">>> PIPELINE_STAGE_START: metadata_upsert" >&2
 UPSERT_ARGS=(
-  -m hybrid_platform.index_metadata upsert
+  -m hybrid_platform.index_metadata
+  "${META_OPT[@]}"
+  upsert
   --repo "$REPO_NAME"
   --commit "$COMMIT_SHA"
   --config "$CONFIG_PATH"
   --output-dir "$OUTPUT_DIR"
 )
-UPSERT_ARGS+=("${META_OPT[@]}")
 (cd "$HYBRID_ROOT" && "$PYTHON" "${UPSERT_ARGS[@]}")
 echo ">>> PIPELINE_STAGE_OK: metadata_upsert" >&2
 echo ">>> PIPELINE_DONE: index + metadata. Start gateway: $SCRIPT_DIR/start_mcp_gateway_8765.sh" >&2

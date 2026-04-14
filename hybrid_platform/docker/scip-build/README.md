@@ -12,10 +12,19 @@
 
 ```bash
 cd hybrid_platform/docker/scip-build
-docker build -t hybrid-scip-build:local -f Dockerfile .
+docker build --build-arg BASE_IMAGE=eclipse-temurin:17-jdk-jammy -t hybrid-scip-build:jdk17 -f Dockerfile .
 ```
 
-需要 **JDK 21 / 23** 时，可修改 `Dockerfile` 第一行为 `eclipse-temurin:21-jdk-jammy` 等并重建 tag。
+常用多版本构建示例：
+
+```bash
+docker build --build-arg BASE_IMAGE=eclipse-temurin:11-jdk-jammy -t hybrid-scip-build:jdk11 -f Dockerfile .
+docker build --build-arg BASE_IMAGE=eclipse-temurin:17-jdk-jammy -t hybrid-scip-build:jdk17 -f Dockerfile .
+docker build --build-arg BASE_IMAGE=eclipse-temurin:21-jdk-jammy -t hybrid-scip-build:jdk21 -f Dockerfile .
+docker build --build-arg BASE_IMAGE=eclipse-temurin:23-jdk -t hybrid-scip-build:jdk23 -f Dockerfile .
+```
+
+注意：`eclipse-temurin:23-jdk-jammy` 不存在，JDK 23 请用 `eclipse-temurin:23-jdk`。
 
 ## 生成 `.scip`
 
@@ -54,5 +63,22 @@ source myenv/bin/activate # 或按项目规则指定解释器
 ## 说明
 
 - 源码挂载为可写（`/work`），因 Maven/Gradle 需在仓库内写 `target/`、`build/` 等。
-- 可选：为加速依赖下载增加 `-v maven-repo:/root/.m2` 等命名卷。
-- `JAVA_TOOL_OPTIONS`、`MAVEN_OPTS` 会通过 `docker run -e` 传入容器。
+- 脚本默认会挂载 `/data1/qadong/.m2/repository`、`/data1/qadong/.gradle`、`/data1/qadong/tmp` 到容器内，避免把缓存和临时文件写回根分区。
+- `JAVA_TOOL_OPTIONS`、`MAVEN_OPTS`、`GRADLE_USER_HOME` 会通过 `docker run -e` 传入容器。
+
+## 批量跑 manifest
+
+已提供正式脚本：
+
+```bash
+cd hybrid_platform
+source myenv/bin/activate
+
+./scripts/docker_manifest_build.sh \
+  --manifest "/data1/qadong/codeindex_java/JAVA test/test_java_agent_manifest_size_ge_100000.jsonl" \
+  --config ./var/server_vllm_generic_config.json \
+  --overrides ./var/java_eval_overrides.json \
+  --build-images
+```
+
+默认只跑 `targets.json` 中 `index_status == missing` 的目标。可用 `--slug`、`--limit`、`--dry-run` 缩小范围验证。

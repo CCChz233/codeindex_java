@@ -170,15 +170,22 @@ class CodeGraphBuilder:
         node_ids = [str(row["node_id"]) for row in cur.fetchall()]
         if not node_ids:
             return
-        q_marks = ",".join(["?"] * len(node_ids))
-        self.store.conn.execute(
-            f"DELETE FROM code_edges WHERE src_node IN ({q_marks}) OR dst_node IN ({q_marks})",
-            tuple(node_ids + node_ids),
-        )
-        self.store.conn.execute(
-            f"DELETE FROM code_nodes WHERE node_id IN ({q_marks})",
-            tuple(node_ids),
-        )
+        # SQLite variable count is capped (often 999); edge delete binds 2*N vars.
+        batch_size = 400
+        for i in range(0, len(node_ids), batch_size):
+            batch = node_ids[i : i + batch_size]
+            q_marks = ",".join(["?"] * len(batch))
+            self.store.conn.execute(
+                f"DELETE FROM code_edges WHERE src_node IN ({q_marks}) OR dst_node IN ({q_marks})",
+                tuple(batch + batch),
+            )
+        for i in range(0, len(node_ids), batch_size):
+            batch = node_ids[i : i + batch_size]
+            q_marks = ",".join(["?"] * len(batch))
+            self.store.conn.execute(
+                f"DELETE FROM code_nodes WHERE node_id IN ({q_marks})",
+                tuple(batch),
+            )
 
     def _upsert_nodes(self, repo: str, commit: str) -> int:
         cur = self.store.conn.execute(

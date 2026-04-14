@@ -47,9 +47,14 @@ def _json_dump(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
-def preferred_data_root() -> Path:
-    """大文件优先落在常见数据盘；若不存在则回退到仓库内 ``var/java_eval``。"""
+WORKSPACE_ROOT = HYBRID_ROOT.parent / "workspace"
 
+
+def preferred_data_root() -> Path:
+    """大文件优先落在 workspace/；若不存在则回退到仓库内 ``var/java_eval``。"""
+    ws = WORKSPACE_ROOT
+    if ws.exists():
+        return ws
     for base in (Path("/data1/qadong"), Path("/data/qadong")):
         if base.exists():
             return base / "java_eval"
@@ -57,6 +62,8 @@ def preferred_data_root() -> Path:
 
 
 def default_state_root() -> Path:
+    if WORKSPACE_ROOT.exists():
+        return WORKSPACE_ROOT
     return HYBRID_ROOT / "var" / "java_eval"
 
 
@@ -73,6 +80,9 @@ def default_manifests_root() -> Path:
 
 
 def default_tmp_root() -> Path:
+    ws_tmp = WORKSPACE_ROOT / "cache" / "tmp"
+    if ws_tmp.exists():
+        return ws_tmp
     for path in (Path("/data1/qadong/tmp"), Path("/data1/tmp"), preferred_data_root() / "tmp"):
         if path.exists():
             return path
@@ -116,7 +126,10 @@ class TargetOverride:
     clone_shallow: bool | None = None
     build_args: list[str] = field(default_factory=list)
     build_env: dict[str, str] = field(default_factory=dict)
+    docker_packages: list[str] = field(default_factory=list)
+    docker_pre_script: str = ""
     pilot: bool = False
+    skip: bool = False
     notes: str = ""
 
     def merged_with(self, other: TargetOverride) -> TargetOverride:
@@ -132,7 +145,10 @@ class TargetOverride:
             clone_shallow=self.clone_shallow if other.clone_shallow is None else other.clone_shallow,
             build_args=list(other.build_args or self.build_args),
             build_env=merged_env,
+            docker_packages=list(other.docker_packages or self.docker_packages),
+            docker_pre_script=other.docker_pre_script or self.docker_pre_script,
             pilot=bool(self.pilot or other.pilot),
+            skip=bool(self.skip or other.skip),
             notes=other.notes or self.notes,
         )
         return merged
@@ -147,6 +163,9 @@ class TargetOverride:
         build_env = raw.get("build_env", {})
         if not isinstance(build_env, dict):
             build_env = {}
+        docker_packages = raw.get("docker_packages", [])
+        if not isinstance(docker_packages, list):
+            docker_packages = []
         return cls(
             config_path=str(raw.get("config_path", "")).strip(),
             build_tool=str(raw.get("build_tool", "")).strip(),
@@ -157,7 +176,10 @@ class TargetOverride:
             clone_shallow=None if "clone_shallow" not in raw else bool(raw.get("clone_shallow")),
             build_args=[str(x) for x in build_args if str(x).strip()],
             build_env={str(k): str(v) for k, v in build_env.items() if str(k).strip()},
+            docker_packages=[str(x) for x in docker_packages if str(x).strip()],
+            docker_pre_script=str(raw.get("docker_pre_script", "")).strip(),
             pilot=bool(raw.get("pilot", False)),
+            skip=bool(raw.get("skip", False)),
             notes=str(raw.get("notes", "")).strip(),
         )
 
@@ -187,7 +209,10 @@ class PreparedTarget:
     clone_shallow: bool
     build_args: list[str]
     build_env: dict[str, str]
+    docker_packages: list[str]
+    docker_pre_script: str
     pilot: bool
+    skip: bool
     notes: str
     language_values: list[str]
     difficulty_values: list[str]
@@ -346,7 +371,10 @@ def derive_targets(
                 clone_shallow=bool(override.clone_shallow),
                 build_args=list(override.build_args),
                 build_env=dict(override.build_env),
+                docker_packages=list(override.docker_packages),
+                docker_pre_script=override.docker_pre_script,
                 pilot=bool(override.pilot),
+                skip=bool(override.skip),
                 notes=override.notes,
                 language_values=sorted({sample.language for sample in group if sample.language}),
                 difficulty_values=sorted({sample.difficulty for sample in group if sample.difficulty}),
@@ -413,6 +441,7 @@ def render_targets_doc(
             "unique_targets": len(targets),
             "status_counts": dict(status_counts),
             "pilot_targets": [target.slug for target in targets if target.pilot],
+            "skipped_targets": [target.slug for target in targets if target.skip],
         },
         "targets": [target.to_json_dict() for target in targets],
     }
@@ -651,6 +680,7 @@ def cmd_derive(args: argparse.Namespace) -> None:
                 "unique_targets": targets_doc["summary"]["unique_targets"],
                 "status_counts": targets_doc["summary"]["status_counts"],
                 "pilot_targets": targets_doc["summary"]["pilot_targets"],
+                "skipped_targets": targets_doc["summary"]["skipped_targets"],
             }
         )
     )
@@ -670,6 +700,20 @@ def cmd_build(args: argparse.Namespace) -> None:
 
     results: list[dict[str, Any]] = []
     for target in selected:
+        if target.skip:
+            results.append(
+                {
+                    "slug": target.slug,
+                    "repo": target.repo,
+                    "base_sha": target.base_sha,
+                    "status": "skipped_override",
+                    "log_path": "",
+                    "elapsed_s": 0.0,
+                    "command": [],
+                    "notes": target.notes,
+                }
+            )
+            continue
         if bool(args.skip_ready) and target.reusable_index:
             results.append(
                 {

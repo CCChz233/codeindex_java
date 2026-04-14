@@ -52,6 +52,9 @@ Thumbs.db
 # --- Java / Maven 构建输出 ---
 **/target/
 
+# --- 统一工作区（所有 worktree、索引、缓存、日志）---
+workspace/
+
 # --- 其它常见大文件 / 缓存 ---
 *.zip
 *.tar

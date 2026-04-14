@@ -180,6 +180,15 @@ fi
 COMMIT_SHA="$(printf '%s' "$COMMIT_SHA" | tr '[:upper:]' '[:lower:]')"
 mkdir -p "$OUTPUT_DIR"
 
+TMP_ROOT="${TMPDIR:-${TMP:-${TEMP:-/data1/qadong/tmp}}}"
+mkdir -p "$TMP_ROOT"
+export TMPDIR="${TMPDIR:-$TMP_ROOT}"
+export TMP="${TMP:-$TMP_ROOT}"
+export TEMP="${TEMP:-$TMP_ROOT}"
+export SQLITE_TMPDIR="${SQLITE_TMPDIR:-$TMP_ROOT}"
+export ARROW_TMPDIR="${ARROW_TMPDIR:-$TMP_ROOT}"
+echo "[index_build_repo_commit] TMPDIR=$TMPDIR SQLITE_TMPDIR=$SQLITE_TMPDIR ARROW_TMPDIR=$ARROW_TMPDIR" >&2
+
 export HYBRID_REPO_NAME="$REPO_NAME"
 export HYBRID_COMMIT_SHA="$COMMIT_SHA"
 SLUG="$("$PYTHON" -c "import os; from hybrid_platform.index_slug import repo_commit_slug; print(repo_commit_slug(os.environ['HYBRID_REPO_NAME'], os.environ['HYBRID_COMMIT_SHA']))")"

@@ -140,37 +140,42 @@ class SqliteStore:
         doc_ids = [str(row["document_id"]) for row in cur.fetchall()]
         if not doc_ids:
             return
-        q_marks = ",".join(["?"] * len(doc_ids))
-        cur = self.conn.execute(
-            f"SELECT chunk_id FROM chunks WHERE document_id IN ({q_marks})",
-            tuple(doc_ids),
-        )
-        chunk_ids = [str(row["chunk_id"]) for row in cur.fetchall()]
-        if self._vector_delete_hook and chunk_ids:
-            self._vector_delete_hook(chunk_ids)
-        self.conn.execute(
-            f"DELETE FROM relations WHERE evidence_document_id IN ({q_marks})",
-            tuple(doc_ids),
-        )
-        self.conn.execute(
-            f"DELETE FROM occurrences WHERE document_id IN ({q_marks})",
-            tuple(doc_ids),
-        )
-        self.conn.execute(
-            f"DELETE FROM embeddings WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE document_id IN ({q_marks}))",
-            tuple(doc_ids),
-        )
-        self.conn.execute(
-            f"DELETE FROM chunks WHERE document_id IN ({q_marks})",
-            tuple(doc_ids),
-        )
-        self.conn.execute(
-            f"DELETE FROM chunks_fts WHERE rowid NOT IN (SELECT rowid FROM chunks)",
-        )
-        self.conn.execute(
-            f"DELETE FROM documents WHERE document_id IN ({q_marks})",
-            tuple(doc_ids),
-        )
+        batch_size = 400
+        for i in range(0, len(doc_ids), batch_size):
+            batch = doc_ids[i : i + batch_size]
+            q_marks = ",".join(["?"] * len(batch))
+            if self._vector_delete_hook:
+                cur = self.conn.execute(
+                    f"SELECT chunk_id FROM chunks WHERE document_id IN ({q_marks})",
+                    tuple(batch),
+                )
+                chunk_ids = [str(row["chunk_id"]) for row in cur.fetchall()]
+                if chunk_ids:
+                    self._vector_delete_hook(chunk_ids)
+            self.conn.execute(
+                f"DELETE FROM relations WHERE evidence_document_id IN ({q_marks})",
+                tuple(batch),
+            )
+            self.conn.execute(
+                f"DELETE FROM occurrences WHERE document_id IN ({q_marks})",
+                tuple(batch),
+            )
+            self.conn.execute(
+                f"DELETE FROM embeddings WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE document_id IN ({q_marks}))",
+                tuple(batch),
+            )
+            self.conn.execute(
+                f"DELETE FROM chunks_fts WHERE rowid IN (SELECT rowid FROM chunks WHERE document_id IN ({q_marks}))",
+                tuple(batch),
+            )
+            self.conn.execute(
+                f"DELETE FROM chunks WHERE document_id IN ({q_marks})",
+                tuple(batch),
+            )
+            self.conn.execute(
+                f"DELETE FROM documents WHERE document_id IN ({q_marks})",
+                tuple(batch),
+            )
 
     def delete_chunks_for_repo_commit(
         self,

@@ -12,6 +12,16 @@
       "updated_at": "2026-04-09T11:09:29.743200+00:00"
     },
     {
+      "slug": "TimefoldAI_timefold-solver_1a86e96b4607a71b7d7874def546f4ade1b71d06",
+      "repo": "TimefoldAI/timefold-solver",
+      "commit": "1a86e96b4607a71b7d7874def546f4ade1b71d06",
+      "db_path": "/data1/qadong/codeindex_java/hybrid_platform/var/hybrid_indices/TimefoldAI_timefold-solver_1a86e96b4607a71b7d7874def546f4ade1b71d06.db",
+      "mcp_path": "/mcp/TimefoldAI_timefold-solver_1a86e96b4607a71b7d7874def546f4ade1b71d06",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/config/java_eval_deterministic_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-13T02:23:01.529804+00:00"
+    },
+    {
       "slug": "dapr_java-sdk_dcaca773b3864d815e7796fc2460bcec360e5e49",
       "repo": "dapr/java-sdk",
       "commit": "dcaca773b3864d815e7796fc2460bcec360e5e49",
