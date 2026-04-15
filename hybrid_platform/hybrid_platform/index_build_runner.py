@@ -8,7 +8,17 @@ from typing import Any, Callable
 
 from .code_graph import CodeGraphBuilder
 from .config import AppConfig
+from .fallback_indexer import DocumentFallbackIndexer, SyntaxFallbackIndexer
 from .ingestion import IngestionPipeline
+from .index_contract import (
+    FALLBACK_MODE_DOCUMENT,
+    FALLBACK_MODE_OFF,
+    FALLBACK_MODE_SYNTAX,
+    SOURCE_MODE_DOCUMENT,
+    SOURCE_MODE_SCIP,
+    SOURCE_MODE_SYNTAX,
+    normalize_fallback_mode,
+)
 from .java_indexer import JavaIndexRequest, JavaIndexer
 from .runtime_factory import (
     chunk_runtime_dict_from_app_config,
@@ -93,6 +103,7 @@ def run_java_full_index_pipeline(
     config_inline: dict[str, Any] | None = None,
     serve_db_path: str | None = None,
     progress_callback: Callable[[str], None] | None = None,
+    build_args: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """
     执行与 CLI ``index-java`` + ``build-code-graph`` + ``chunk`` + ``embed`` 等价的流水线。
@@ -130,18 +141,41 @@ def run_java_full_index_pipeline(
         targetroot=str(jcfg.get("targetroot", "") or "").strip(),
         cleanup=bool(jcfg.get("cleanup", True)),
         verbose=bool(jcfg.get("verbose", False)),
-        build_args=(),
+        build_args=tuple(str(x) for x in build_args),
         semanticdb_targetroot=str(jcfg.get("semanticdb_targetroot", "") or "").strip(),
     )
+    fallback_mode = normalize_fallback_mode(str(jcfg.get("fallback_mode", "syntax") or "syntax"))
     _emit("phase=pipeline.stage stage=scip_java status=start")
-    java_res = JavaIndexer(java_req).run()
-    scip_java_stats = {
-        "build_tool": java_res.build_tool,
-        "command": java_res.command,
-        "output_path": java_res.output_path,
-        "elapsed_ms": java_res.elapsed_ms,
-        "used_manual_fallback": java_res.used_manual_fallback,
-    }
+    source_mode = SOURCE_MODE_SCIP
+    build_failure: dict[str, Any] | None = None
+    fallback_stats: dict[str, Any] | None = None
+    java_res = None
+    try:
+        java_res = JavaIndexer(java_req).run()
+        scip_java_stats = {
+            "build_tool": java_res.build_tool,
+            "command": java_res.command,
+            "output_path": java_res.output_path,
+            "elapsed_ms": java_res.elapsed_ms,
+            "used_manual_fallback": java_res.used_manual_fallback,
+            "fallback_mode": fallback_mode,
+        }
+    except Exception as exc:
+        scip_java_stats = {
+            "build_tool": java_req.build_tool or "",
+            "command": [],
+            "output_path": str(scip_out),
+            "elapsed_ms": 0,
+            "used_manual_fallback": False,
+            "fallback_mode": fallback_mode,
+            "failed": True,
+        }
+        build_failure = {
+            "type": type(exc).__name__,
+            "message": str(exc),
+        }
+        if fallback_mode == FALLBACK_MODE_OFF:
+            raise
     _emit("phase=pipeline.stage stage=scip_java status=done")
 
     ingest_section = cfg.get_section("ingest")
@@ -154,20 +188,71 @@ def run_java_full_index_pipeline(
     try:
         configure_vector_delete_hook_from_config(store, cfg)
         _emit("phase=pipeline.stage stage=ingest status=start")
-        ingest_stats = IngestionPipeline(store, batch_size=batch_size).run(
-            input_path=java_res.output_path,
-            repo=repo,
-            commit=commit,
-            index_version=index_version,
-            retries=retries,
-            source_root=source_root,
-        )
+        if java_res is not None:
+            store.prepare_index(
+                repo,
+                commit,
+                source_mode=SOURCE_MODE_SCIP,
+                build_tool=java_res.build_tool,
+                build_failure=build_failure,
+            )
+            ingest_stats = IngestionPipeline(store, batch_size=batch_size).run(
+                input_path=java_res.output_path,
+                repo=repo,
+                commit=commit,
+                index_version=index_version,
+                retries=retries,
+                source_root=source_root,
+                source_mode=SOURCE_MODE_SCIP,
+                build_tool=java_res.build_tool,
+                build_failure=build_failure,
+            )
+            ingest_dict = ingest_stats.__dict__
+        else:
+            fallback_errors: list[str] = []
+            if fallback_mode == FALLBACK_MODE_SYNTAX:
+                try:
+                    store.prepare_index(
+                        repo,
+                        commit,
+                        source_mode=SOURCE_MODE_SYNTAX,
+                        build_tool=str(java_req.build_tool or ""),
+                        build_failure=build_failure,
+                    )
+                    syntax_stats = SyntaxFallbackIndexer(store).run(str(root), repo, commit)
+                    source_mode = SOURCE_MODE_SYNTAX
+                    fallback_stats = syntax_stats.as_dict()
+                except Exception as exc:
+                    fallback_errors.append(str(exc))
+            if fallback_stats is None:
+                store.prepare_index(
+                    repo,
+                    commit,
+                    source_mode=SOURCE_MODE_DOCUMENT,
+                    build_tool=str(java_req.build_tool or ""),
+                    build_failure=build_failure,
+                )
+                document_stats = DocumentFallbackIndexer(store).run(str(root), repo, commit)
+                source_mode = SOURCE_MODE_DOCUMENT
+                fallback_stats = document_stats.as_dict()
+                if fallback_errors:
+                    fallback_stats["syntax_error"] = fallback_errors[-1]
+            ingest_dict = {
+                "documents": int(fallback_stats.get("documents", 0)),
+                "symbols": int(fallback_stats.get("symbols", 0)),
+                "occurrences": int(fallback_stats.get("occurrences", 0)),
+                "relations": int(fallback_stats.get("relations", 0)),
+                "failures": 0,
+                "source_mode": source_mode,
+            }
         _emit("phase=pipeline.stage stage=ingest status=done")
-        ingest_dict = ingest_stats.__dict__
 
-        _emit("phase=pipeline.stage stage=build_code_graph status=start")
-        graph_stats = CodeGraphBuilder(store).build(repo=repo, commit=commit)
-        _emit("phase=pipeline.stage stage=build_code_graph status=done")
+        if store.get_source_mode() == SOURCE_MODE_DOCUMENT:
+            graph_stats = CodeGraphBuilder(store).build(repo=repo, commit=commit)
+        else:
+            _emit("phase=pipeline.stage stage=build_code_graph status=start")
+            graph_stats = CodeGraphBuilder(store).build(repo=repo, commit=commit)
+            _emit("phase=pipeline.stage stage=build_code_graph status=done")
 
         embedding_version = default_embedding_version_from_app_config(cfg)
         chunk_kw = chunk_runtime_dict_from_app_config(cfg)
@@ -191,11 +276,14 @@ def run_java_full_index_pipeline(
             "db_path": str(db),
             "repo": repo,
             "commit": commit,
+            "source_mode": store.get_source_mode(),
             "scip_java": scip_java_stats,
             "ingest": ingest_dict,
             "code_graph": graph_stats.__dict__,
             "chunk": {"chunks": chunks_total, "embedding_version": embedding_version},
             "embed": embed_stats.as_dict(),
+            "index_info": store.get_index_info(),
+            "fallback": fallback_stats,
         }
     finally:
         store.close()

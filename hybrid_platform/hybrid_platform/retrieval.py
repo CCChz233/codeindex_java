@@ -5,6 +5,7 @@ from typing import Dict, List
 
 from .dsl import Query
 from .embedding import EmbeddingPipeline
+from .index_contract import CAP_CALL, CAP_DEF, CAP_FIND_ENTITY, CAP_REF
 from .models import QueryResult
 from .query_test_signals import (
     path_looks_like_test_source,
@@ -39,16 +40,28 @@ class HybridRetrievalService:
         self.test_code_depref_enabled = bool(test_code_depref_enabled)
         self.test_code_score_factor = max(0.0, min(1.0, float(test_code_score_factor)))
 
+    def _annotate_source_mode(self, results: List[QueryResult]) -> List[QueryResult]:
+        source_mode = self.store.get_source_mode()
+        for item in results:
+            payload = dict(item.payload or {})
+            payload.setdefault("source_mode", source_mode)
+            item.payload = payload
+        return results
+
     def def_of(self, symbol_id: str, top_k: int = 10) -> List[QueryResult]:
+        self.store.require_capability(CAP_DEF)
         return self.store.def_of(symbol_id, top_k)
 
     def refs_of(self, symbol_id: str, top_k: int = 10) -> List[QueryResult]:
+        self.store.require_capability(CAP_REF)
         return self.store.refs_of(symbol_id, top_k)
 
     def callers_of(self, symbol_id: str, top_k: int = 10) -> List[QueryResult]:
+        self.store.require_capability(CAP_CALL)
         return self.store.callers_of(symbol_id, top_k)
 
     def callees_of(self, symbol_id: str, top_k: int = 10) -> List[QueryResult]:
+        self.store.require_capability(CAP_CALL)
         return self.store.callees_of(symbol_id, top_k)
 
     def _linear_fusion(
@@ -188,7 +201,7 @@ class HybridRetrievalService:
         max_code_chars: int,
     ) -> List[QueryResult]:
         if not include_code:
-            return results
+            return self._annotate_source_mode(results)
         for item in results:
             payload = dict(item.payload or {})
             if item.result_type == "chunk":
@@ -223,7 +236,7 @@ class HybridRetrievalService:
                         }
                     )
             item.payload = payload or None
-        return results
+        return self._annotate_source_mode(results)
 
     def query(
         self,
@@ -241,6 +254,8 @@ class HybridRetrievalService:
             "callees_of": lambda: self.callees_of(q.symbol_id, q.top_k),
         }
         if q.structured_op in structured_dispatch:
+            if q.structured_op == "symbol_exact":
+                self.store.require_capability(CAP_FIND_ENTITY)
             return self._attach_code(
                 self._rerank_with_test_depref(q, structured_dispatch[q.structured_op]()),
                 include_code,
@@ -261,6 +276,7 @@ class HybridRetrievalService:
             ]
 
         if q.mode == "structure":
+            self.store.require_capability(CAP_FIND_ENTITY)
             structured = self.store.symbol_exact(q.text, q.top_k)
             return self._attach_code(
                 self._rerank_with_test_depref(q, structured[: q.top_k]),
@@ -275,7 +291,7 @@ class HybridRetrievalService:
                 max_code_chars,
             )
 
-        structured = self.store.symbol_exact(q.text, q.top_k)
+        structured = self.store.symbol_exact(q.text, q.top_k) if self.store.supports_capability(CAP_FIND_ENTITY) else []
         keyword = self.store.keyword_search(q.text, q.top_k)
         semantic = semantic_results()
 

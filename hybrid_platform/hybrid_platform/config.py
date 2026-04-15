@@ -37,6 +37,7 @@ class AppConfig:
                 "cleanup": True,
                 "verbose": False,
                 "semanticdb_targetroot": "",
+                "fallback_mode": "syntax",
             },
             "chunk": {
                 "target_tokens": 512,

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from typing import Dict, List, Set
 
 from .embedding import EmbeddingPipeline
+from .index_contract import CAP_CALL, CAP_HIERARCHY, UnsupportedCapabilityError
 from .storage import SqliteStore
 
 
@@ -17,6 +19,20 @@ class GraphService:
         self.store = store
         self.embedding_pipeline = embedding_pipeline or EmbeddingPipeline(store)
         self.default_embedding_version = default_embedding_version
+
+    def _require_code_graph_capability(self, edge_type: str) -> None:
+        edge = str(edge_type or "calls").strip().lower()
+        if edge in {"calls", "field_refs"}:
+            self.store.require_capability(CAP_CALL)
+            return
+        if edge in {"belongs_to", "extends", "implements"}:
+            self.store.require_capability(CAP_HIERARCHY)
+            return
+        raise UnsupportedCapabilityError(
+            "graph_edge",
+            self.store.get_source_mode(),
+            detail=f"unsupported edge_type={edge!r}",
+        )
 
     def _resolve_node_id(self, symbol_or_node: str) -> str:
         if ":" in symbol_or_node and not symbol_or_node.startswith("scip-"):
@@ -35,6 +51,8 @@ class GraphService:
         return str(row["node_id"]) if row is not None else symbol_or_node
 
     def code_subgraph(self, seed_ids: List[str], hops: int = 1, edge_type: str = "calls") -> Dict[str, object]:
+        self._require_code_graph_capability(edge_type)
+        source_mode = self.store.get_source_mode()
         visited: Set[str] = set(seed_ids)
         frontier = set(seed_ids)
         edges = []
@@ -45,7 +63,7 @@ class GraphService:
             q_marks = ",".join(["?"] * len(frontier))
             cur = self.store.conn.execute(
                 f"""
-                SELECT src_node, dst_node, edge_type, weight, confidence
+                SELECT src_node, dst_node, edge_type, weight, confidence, evidence_json
                 FROM code_edges
                 WHERE edge_type = ? AND (src_node IN ({q_marks}) OR dst_node IN ({q_marks}))
                 """,
@@ -58,6 +76,12 @@ class GraphService:
                 edge_key = (str(src), str(dst), str(r["edge_type"]))
                 if edge_key not in seen_edges:
                     seen_edges.add(edge_key)
+                    evidence = {}
+                    if r["evidence_json"]:
+                        try:
+                            evidence = json.loads(str(r["evidence_json"]))
+                        except json.JSONDecodeError:
+                            evidence = {}
                     edges.append(
                         {
                             "src": src,
@@ -65,6 +89,8 @@ class GraphService:
                             "type": r["edge_type"],
                             "weight": r["weight"],
                             "confidence": r["confidence"],
+                            "edge_source": str(evidence.get("source", "")),
+                            "source_mode": source_mode,
                         }
                     )
                 if src not in visited:
@@ -86,9 +112,15 @@ class GraphService:
                 tuple(visited),
             )
             nodes = [dict(r) for r in cur.fetchall()]
-        return {"nodes": nodes, "edges": edges, "explain": {"hops": hops, "edge_type": edge_type}}
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "explain": {"hops": hops, "edge_type": edge_type, "source_mode": source_mode},
+        }
 
     def intent_subgraph(self, community_ids: List[str]) -> Dict[str, object]:
+        if self.store.get_source_mode() == "document":
+            raise UnsupportedCapabilityError("graph", self.store.get_source_mode())
         if not community_ids:
             return {"nodes": [], "edges": []}
         q_marks = ",".join(["?"] * len(community_ids))
@@ -231,6 +263,7 @@ class GraphService:
         hops: int | None = None,
         embedding_version: str | None = None,
     ) -> Dict[str, object]:
+        self._require_code_graph_capability(edge_type)
         if symbol:
             seed = self._resolve_node_id(symbol)
             result = self.code_subgraph([seed], hops=2, edge_type=edge_type)

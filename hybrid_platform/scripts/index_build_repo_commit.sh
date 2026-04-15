@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一键：Java SCIP → ingest → build-code-graph → chunk → embed（与 index_build_runner 一致；chunk 需 code_edges 才有 call context）。
+# 一键：Java build-java-index（正式入口）或 prebuilt SCIP → ingest → build-code-graph → chunk → embed。
 # 数据库：${OUTPUT_DIR}/${slug}.db，slug = sanitize(repo)_${commit_sha}（commit 小写 hex）。
 #
 # 参数（命令行优先于环境变量；环境变量仍可用 CONFIG_PATH / REPO_NAME / COMMIT_SHA / REPO_ROOT 等）：
@@ -29,7 +29,7 @@ PYTHON="${HYBRID_PYTHON:-${HYBRID_ROOT}/myenv/bin/python}"
 
 usage() {
   cat >&2 <<'EOF'
-index_build_repo_commit.sh — Java 一键构建索引（index-java → build-code-graph → chunk → embed）
+index_build_repo_commit.sh — Java 一键构建索引（build-java-index，或 prebuilt SCIP → ingest → build-code-graph → chunk → embed）
 
 必填参数（或同名环境变量；命令行优先）：
   --config PATH        hybrid JSON 配置
@@ -227,35 +227,26 @@ if [[ -n "$PREBUILT_SCIP" ]]; then
   echo "[index_build_repo_commit] using prebuilt SCIP: $PREBUILT_SCIP" >&2
   run_stage ingest ingest --repo "$REPO_NAME" --commit "$COMMIT_SHA" --db "$DB_PATH" \
     --input "$PREBUILT_SCIP" --source-root "$REPO_ROOT"
+  if [[ "${SKIP_CODE_GRAPH:-0}" != "1" ]]; then
+    run_stage build-code-graph build-code-graph --db "$DB_PATH" --repo "$REPO_NAME" --commit "$COMMIT_SHA"
+  fi
+  if [[ "${SKIP_CHUNK:-0}" != "1" ]]; then
+    run_stage chunk chunk --db "$DB_PATH" --repo "$REPO_NAME" --commit "$COMMIT_SHA"
+  fi
+  if [[ "${SKIP_EMBED:-0}" != "1" ]]; then
+    run_stage embed embed --db "$DB_PATH"
+  fi
 else
-IDX_JAVA_ARGS=(index-java --repo-root "$REPO_ROOT" --repo "$REPO_NAME" --commit "$COMMIT_SHA" --db "$DB_PATH")
-if [[ -n "${BUILD_TOOL:-}" ]]; then
-  IDX_JAVA_ARGS+=(--build-tool "$BUILD_TOOL")
-fi
-# argparse 会把「以 - 开头」的 Maven/Gradle 参数误当成 CLI 选项，必须在前面加 --
-if [[ ${#EXTRA_JAVA[@]} -gt 0 ]]; then
-  IDX_JAVA_ARGS+=(--)
-  IDX_JAVA_ARGS+=("${EXTRA_JAVA[@]}")
-fi
-run_stage index-java "${IDX_JAVA_ARGS[@]}"
-fi
-
-if [[ -z "${SKIP_CODE_GRAPH:-}" ]]; then
-  run_stage build-code-graph build-code-graph --db "$DB_PATH" --repo "$REPO_NAME" --commit "$COMMIT_SHA"
-else
-  echo ">>> PIPELINE_STAGE_SKIP: build-code-graph (chunk 将无 incoming_calls 等图上下文)" >&2
-fi
-
-if [[ -z "${SKIP_CHUNK:-}" ]]; then
-  run_stage chunk chunk --db "$DB_PATH" --repo "$REPO_NAME" --commit "$COMMIT_SHA"
-else
-  echo ">>> PIPELINE_STAGE_SKIP: chunk" >&2
-fi
-
-if [[ -z "${SKIP_EMBED:-}" ]]; then
-  run_stage embed embed --db "$DB_PATH"
-else
-  echo ">>> PIPELINE_STAGE_SKIP: embed" >&2
+  BUILD_ARGS=(build-java-index --repo-root "$REPO_ROOT" --repo "$REPO_NAME" --commit "$COMMIT_SHA" --db "$DB_PATH")
+  if [[ -n "${BUILD_TOOL:-}" ]]; then
+    BUILD_ARGS+=(--build-tool "$BUILD_TOOL")
+  fi
+  # argparse 会把「以 - 开头」的 Maven/Gradle 参数误当成 CLI 选项，必须在前面加 --
+  if [[ ${#EXTRA_JAVA[@]} -gt 0 ]]; then
+    BUILD_ARGS+=(--)
+    BUILD_ARGS+=("${EXTRA_JAVA[@]}")
+  fi
+  run_stage build-java-index "${BUILD_ARGS[@]}"
 fi
 
 echo "[index_build_repo_commit] done slug=$SLUG" >&2

@@ -12,7 +12,8 @@
     "targetroot": "",
     "cleanup": true,
     "verbose": false,
-    "semanticdb_targetroot": ""
+    "semanticdb_targetroot": "",
+    "fallback_mode": "syntax"
   },
   "chunk": {
     "target_tokens": 1024,

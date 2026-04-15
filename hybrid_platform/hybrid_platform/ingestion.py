@@ -32,6 +32,9 @@ class IngestionPipeline:
         retries: int = 2,
         retry_backoff_s: float = 0.5,
         source_root: str | None = None,
+        source_mode: str = "scip",
+        build_tool: str = "",
+        build_failure: dict[str, object] | None = None,
     ) -> IngestionStats:
         _ = RepoSnapshot(
             repo=repo,
@@ -39,7 +42,14 @@ class IngestionPipeline:
             index_version=index_version,
             ingested_at_epoch_ms=int(time.time() * 1000),
         )
-        self.store.delete_repo_snapshot(repo, commit)
+        self.store.prepare_index(
+            repo,
+            commit,
+            source_mode=source_mode,
+            build_tool=build_tool,
+            build_failure=build_failure,
+        )
+        self.store.clear_index_data()
 
         docs: List[ScipDocument] = []
         symbols: List[SymbolNode] = []

@@ -30,6 +30,8 @@ from .java_indexer import JavaIndexRequest, JavaIndexer
 from .entity_eval import entity_eval_report_to_json, format_entity_eval_metrics, run_entity_eval
 from .grep_baseline import grep_baseline_report_to_json, run_grep_baseline
 from .entity_query import entity_types, find_entity
+from .index_build_runner import run_java_full_index_pipeline
+from .index_contract import IndexContractError, UnsupportedCapabilityError
 from .runtime_factory import make_embedding_pipeline_from_app_config, make_vector_stores
 from .storage import SqliteStore
 from .vector_store import SqliteVectorStore
@@ -406,6 +408,9 @@ def cmd_ingest(args: argparse.Namespace) -> None:
 
 
 def cmd_index_java(args: argparse.Namespace) -> None:
+    build_args = list(args.build_args or [])
+    if build_args[:1] == ["--"]:
+        build_args = build_args[1:]
     result = JavaIndexer(
         JavaIndexRequest(
             repo_root=args.repo_root,
@@ -415,7 +420,7 @@ def cmd_index_java(args: argparse.Namespace) -> None:
             targetroot=_resolve(args, "targetroot", "java_index", "targetroot", ""),
             cleanup=bool(_resolve(args, "cleanup", "java_index", "cleanup", True)),
             verbose=bool(_resolve(args, "verbose", "java_index", "verbose", False)),
-            build_args=args.build_args or [],
+            build_args=build_args,
             semanticdb_targetroot=_resolve(
                 args,
                 "semanticdb_targetroot",
@@ -437,6 +442,8 @@ def cmd_index_java(args: argparse.Namespace) -> None:
             index_version=_resolve(args, "index_version", "ingest", "index_version", "v1"),
             retries=int(_resolve(args, "retries", "ingest", "retries", 2)),
             source_root=args.repo_root,
+            source_mode="scip",
+            build_tool=result.build_tool,
         )
         _print_json(
             {
@@ -452,6 +459,46 @@ def cmd_index_java(args: argparse.Namespace) -> None:
         )
     finally:
         store.close()
+
+
+def cmd_build_java_index(args: argparse.Namespace) -> None:
+    build_args = list(args.build_args or [])
+    if build_args[:1] == ["--"]:
+        build_args = build_args[1:]
+    config_inline = json.loads(json.dumps(args.app_config.values))
+    jcfg = dict(config_inline.get("java_index", {}) or {})
+    overrides = {
+        "output": getattr(args, "output", None),
+        "scip_java_cmd": getattr(args, "scip_java_cmd", None),
+        "build_tool": getattr(args, "build_tool", None),
+        "targetroot": getattr(args, "targetroot", None),
+        "semanticdb_targetroot": getattr(args, "semanticdb_targetroot", None),
+        "cleanup": getattr(args, "cleanup", None),
+        "verbose": getattr(args, "verbose", None),
+        "fallback_mode": getattr(args, "fallback_mode", None),
+    }
+    for key, value in overrides.items():
+        if value is not None:
+            jcfg[key] = value
+    config_inline["java_index"] = jcfg
+    icfg = dict(config_inline.get("ingest", {}) or {})
+    for key, value in {
+        "index_version": getattr(args, "index_version", None),
+        "batch_size": getattr(args, "batch_size", None),
+        "retries": getattr(args, "retries", None),
+    }.items():
+        if value is not None:
+            icfg[key] = value
+    config_inline["ingest"] = icfg
+    result = run_java_full_index_pipeline(
+        repo_root=args.repo_root,
+        repo=args.repo,
+        commit=args.commit,
+        db_path=args.db,
+        config_inline=config_inline,
+        build_args=tuple(build_args),
+    )
+    _print_json(result)
 
 
 def cmd_purge_chunks(args: argparse.Namespace) -> None:
@@ -980,7 +1027,39 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--source-root", default=None)
     ingest.set_defaults(func=cmd_ingest)
 
-    index_java = _subparser_with_config(sub, "index-java")
+    build_java = _subparser_with_config(
+        sub,
+        "build-java-index",
+        help="正式全链路入口：scip-java -> ingest -> build-code-graph -> chunk -> embed；支持 fallback",
+    )
+    build_java.add_argument("--repo-root", required=True)
+    build_java.add_argument("--repo", required=True)
+    build_java.add_argument("--commit", required=True)
+    build_java.add_argument("--db", required=True)
+    build_java.add_argument("--output", default=None)
+    build_java.add_argument("--index-version", default=None)
+    build_java.add_argument("--batch-size", type=int, default=None)
+    build_java.add_argument("--retries", type=int, default=None)
+    build_java.add_argument("--scip-java-cmd", dest="scip_java_cmd", default=None)
+    build_java.add_argument("--build-tool", choices=["maven", "gradle"], default=None)
+    build_java.add_argument("--targetroot", default=None)
+    build_java.add_argument("--semanticdb-targetroot", dest="semanticdb_targetroot", default=None)
+    build_java.add_argument("--cleanup", action=argparse.BooleanOptionalAction, default=None)
+    build_java.add_argument("--verbose", action=argparse.BooleanOptionalAction, default=None)
+    build_java.add_argument(
+        "--fallback-mode",
+        choices=["off", "syntax", "document"],
+        default=None,
+        help="scip-java 失败后的降级模式；默认取 config 的 java_index.fallback_mode（默认 syntax）",
+    )
+    build_java.add_argument("build_args", nargs=argparse.REMAINDER)
+    build_java.set_defaults(func=cmd_build_java_index)
+
+    index_java = _subparser_with_config(
+        sub,
+        "index-java",
+        help="低层调试入口：仅执行 scip-java + ingest（不含完整 build 流水线，也不做 fallback）",
+    )
     index_java.add_argument("--repo-root", required=True)
     index_java.add_argument("--repo", required=True)
     index_java.add_argument("--commit", required=True)
@@ -1346,7 +1425,11 @@ def main() -> None:
     args = parser.parse_args()
     cfg_path = getattr(args, "config_path_override", None) or getattr(args, "config_path", DEFAULT_CONFIG_PATH)
     args.app_config = AppConfig.load(cfg_path)
-    args.func(args)
+    try:
+        args.func(args)
+    except (IndexContractError, UnsupportedCapabilityError) as exc:
+        print(str(exc), file=sys.stderr, flush=True)
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

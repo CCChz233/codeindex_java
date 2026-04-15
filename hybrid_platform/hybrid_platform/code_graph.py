@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass
 from typing import Dict, List
 
+from .index_contract import CAP_CALL, CAP_HIERARCHY, SOURCE_MODE_DOCUMENT
 from .storage import SqliteStore
 
 
@@ -578,11 +579,16 @@ class CodeGraphBuilder:
 
     def build(self, repo: str, commit: str) -> CodeGraphStats:
         stats = CodeGraphStats()
+        if self.store.get_source_mode() == SOURCE_MODE_DOCUMENT:
+            self._clear_repo_graph(repo, commit)
+            self.store.conn.commit()
+            return stats
         self._clear_repo_graph(repo, commit)
         stats.nodes = self._upsert_nodes(repo, commit)
         self._insert_owner_edges(repo, commit)
         stats.direct_call_edges_added = self._insert_relation_edges()
-        stats.inferred_call_edges_added = self._insert_occurrence_edges(repo, commit)
+        if self.store.supports_capability(CAP_CALL):
+            stats.inferred_call_edges_added = self._insert_occurrence_edges(repo, commit)
         self._refresh_degrees()
         cur = self.store.conn.execute("SELECT COUNT(*) AS c FROM code_edges")
         stats.edges = int(cur.fetchone()["c"])

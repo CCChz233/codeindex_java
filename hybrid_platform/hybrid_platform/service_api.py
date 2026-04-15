@@ -11,6 +11,7 @@ from .admin_index_jobs import get_job, list_jobs, submit_java_full_index
 from .dsl import Query, callees_of as dsl_callees_of, callers_of as dsl_callers_of, def_of as dsl_def_of, refs_of as dsl_refs_of
 from .entity_query import entity_types, find_entity
 from .graph_service import GraphService
+from .index_contract import IndexContractError, UnsupportedCapabilityError
 from .retrieval import HybridRetrievalService
 from .runtime_factory import make_embedding_pipeline, make_vector_stores
 from .storage import SqliteStore
@@ -293,6 +294,21 @@ class QueryHandler(BaseHTTPRequestHandler):
                 )
                 return
             self._json_response({"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
+        except UnsupportedCapabilityError as exc:
+            self._json_response(
+                {
+                    "error": "unsupported_capability",
+                    "detail": str(exc),
+                    "capability": exc.capability,
+                    "source_mode": exc.source_mode,
+                },
+                status=HTTPStatus.BAD_REQUEST,
+            )
+        except IndexContractError as exc:
+            self._json_response(
+                {"error": "index_contract_error", "detail": str(exc)},
+                status=HTTPStatus.BAD_REQUEST,
+            )
         except Exception as exc:
             self._json_response(
                 {"error": "bad_request", "detail": str(exc)},

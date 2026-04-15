@@ -245,6 +245,7 @@ def submit_java_full_index(
                 record.stage_stats = {
                     "scip_java": result.get("scip_java"),
                     "ingest": result.get("ingest"),
+                    "code_graph": result.get("code_graph"),
                     "chunk": result.get("chunk"),
                     "embed": result.get("embed"),
                 }

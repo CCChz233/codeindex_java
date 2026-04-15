@@ -20,11 +20,11 @@ if TYPE_CHECKING:
 
 # 用户侧 type -> symbols.kind 取值（SCIP/Java 常见）
 _ENTITY_TYPE_TO_KINDS: dict[str, Optional[Tuple[str, ...]]] = {
-    "class": ("Class",),
+    "class": ("Class", "Record"),
     "interface": ("Interface",),
     "enum": ("Enum",),
     # 「类型」级：类 / 接口 / 枚举
-    "type": ("Class", "Interface", "Enum"),
+    "type": ("Class", "Interface", "Enum", "Record"),
     "method": ("Method", "StaticMethod", "AbstractMethod"),
     "field": ("Field", "StaticField"),
     "constructor": ("Constructor",),
@@ -74,6 +74,7 @@ def find_entity(
     :param package_contains: 可选，要求 ``package`` 或 ``symbol_id`` 中含该子串（忽略大小写）。
     :param limit: 最大返回条数。
     """
+    store.require_capability("find_entity")
     et = normalize_entity_type(type)
     kinds = _ENTITY_TYPE_TO_KINDS[et]
 
@@ -82,60 +83,46 @@ def find_entity(
         return []
 
     pc = (package_contains or "").strip().lower()
-    params: List[object] = []
-    where_kind = ""
-    if kinds is not None:
-        placeholders = ",".join("?" * len(kinds))
-        where_kind = f" AND kind IN ({placeholders})"
-        params.extend(kinds)
-
     nl = name.lower()
-
     if match == "exact":
-        where_name = " AND (lower(display_name) = ? OR lower(symbol_id) = ?)"
-        params.extend([nl, nl])
+        rows = store.conn.execute(
+            """
+            SELECT symbol_id, display_name, kind, package, language, enclosing_symbol
+            FROM symbols
+            WHERE (lower(display_name) = ? OR lower(symbol_id) = ?)
+            ORDER BY length(display_name), symbol_id
+            LIMIT ?
+            """,
+            (nl, nl, max(limit, 50)),
+        ).fetchall()
     else:
-        qn = f"%{nl}%"
-        where_name = " AND (lower(display_name) LIKE ? OR lower(symbol_id) LIKE ?)"
-        params.extend([qn, qn])
-
-    where_pkg = ""
-    if pc:
-        where_pkg = " AND (lower(package) LIKE ? OR lower(symbol_id) LIKE ?)"
-        pcp = f"%{pc}%"
-        params.extend([pcp, pcp])
-
-    # ORDER BY：完全匹配 display_name 优先，再按名称长度、symbol_id
-    params.append(nl)
-    params.append(limit)
-
-    sql = f"""
-        SELECT symbol_id, display_name, kind, package, language, enclosing_symbol
-        FROM symbols
-        WHERE 1=1
-        {where_kind}
-        {where_name}
-        {where_pkg}
-        ORDER BY
-          CASE WHEN lower(display_name) = ? THEN 0 ELSE 1 END,
-          length(display_name),
-          symbol_id
-        LIMIT ?
-    """
-    rows = store.conn.execute(sql, params).fetchall()
+        rows = store._symbol_search_candidates(name, max(limit, 100))
 
     out: List[EntityHit] = []
+    seen: set[str] = set()
     for r in rows:
+        kind = str(r["kind"])
+        if kinds is not None and kind not in kinds:
+            continue
+        package = str(r["package"] or "")
+        sid = str(r["symbol_id"])
+        if pc and pc not in package.lower() and pc not in sid.lower():
+            continue
+        if sid in seen:
+            continue
+        seen.add(sid)
         out.append(
             EntityHit(
-                symbol_id=r["symbol_id"],
-                display_name=r["display_name"],
-                kind=r["kind"],
-                package=r["package"],
+                symbol_id=sid,
+                display_name=str(r["display_name"]),
+                kind=kind,
+                package=package,
                 language=r["language"] or "",
                 enclosing_symbol=r["enclosing_symbol"] or "",
             )
         )
+        if len(out) >= limit:
+            break
     return out
 
 

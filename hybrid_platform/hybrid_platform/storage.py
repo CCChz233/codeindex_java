@@ -3,14 +3,37 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import time
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Sequence
 
 from .entity_query import EntityHit
+from .index_contract import (
+    CAPABILITIES_BY_SOURCE_MODE,
+    INDEX_SCHEMA_VERSION,
+    IndexInfo,
+    ReindexRequiredError,
+    SnapshotMismatchError,
+    capabilities_for_source_mode,
+    ensure_capability,
+    normalize_source_mode,
+)
 from .models import Chunk, OccurrenceEdge, QueryResult, RelationEdge, ScipDocument, SymbolNode
 
 
 SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS index_info (
+  id INTEGER PRIMARY KEY CHECK(id = 1),
+  repo TEXT NOT NULL,
+  commit_hash TEXT NOT NULL,
+  schema_version TEXT NOT NULL,
+  source_mode TEXT NOT NULL,
+  capabilities_json TEXT NOT NULL,
+  build_tool TEXT NOT NULL DEFAULT '',
+  build_failure_json TEXT NOT NULL DEFAULT '',
+  created_at_epoch_ms INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS documents (
   document_id TEXT PRIMARY KEY,
   repo TEXT NOT NULL,
@@ -33,6 +56,12 @@ CREATE TABLE IF NOT EXISTS symbols (
   symbol_fingerprint TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_symbols_display_name ON symbols(display_name);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS symbols_fts USING fts5(
+  symbol_id UNINDEXED,
+  display_name,
+  package
+);
 
 CREATE TABLE IF NOT EXISTS occurrences (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -95,15 +124,46 @@ class SqliteStore:
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self._vector_delete_hook: Callable[[List[str]], None] | None = None
+        self._index_info_cache: IndexInfo | None = None
+        self._reject_legacy_schema_if_needed()
         self.conn.executescript(SCHEMA_SQL)
         self._migrate_schema()
         self.conn.commit()
+        self._validate_index_info_contract()
 
     def close(self) -> None:
         self.conn.close()
 
     def set_vector_delete_hook(self, hook: Callable[[List[str]], None] | None) -> None:
         self._vector_delete_hook = hook
+
+    def _legacy_index_data_present(self) -> bool:
+        legacy_tables = {
+            "documents",
+            "symbols",
+            "occurrences",
+            "relations",
+            "chunks",
+            "embeddings",
+        }
+        cur = self.conn.execute(
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE type IN ('table', 'view')
+            """
+        )
+        names = {str(row["name"]) for row in cur.fetchall()}
+        return bool(names & legacy_tables)
+
+    def _reject_legacy_schema_if_needed(self) -> None:
+        has_index_info = self._table_exists("index_info")
+        if has_index_info:
+            return
+        if self._legacy_index_data_present():
+            raise ReindexRequiredError(
+                "legacy index schema detected: missing index_info table; rebuild this index with the current code"
+            )
 
     def _ensure_column(self, table: str, column: str, ddl: str) -> None:
         cur = self.conn.execute(f"PRAGMA table_info({table})")
@@ -132,50 +192,199 @@ class SqliteStore:
         ).fetchone()
         return row is not None
 
-    def delete_repo_snapshot(self, repo: str, commit: str) -> None:
+    def _count_rows(self, table_name: str) -> int:
+        if not self._table_exists(table_name):
+            return 0
+        cur = self.conn.execute(f"SELECT COUNT(*) AS c FROM {table_name}")
+        row = cur.fetchone()
+        return int(row["c"]) if row is not None else 0
+
+    def _has_any_index_data(self) -> bool:
+        for table_name in (
+            "documents",
+            "symbols",
+            "occurrences",
+            "relations",
+            "chunks",
+            "embeddings",
+            "code_nodes",
+            "code_edges",
+            "function_intents",
+            "module_intents",
+            "intent_communities",
+        ):
+            if self._count_rows(table_name) > 0:
+                return True
+        return False
+
+    def _load_index_info(self) -> IndexInfo | None:
+        if not self._table_exists("index_info"):
+            return None
         cur = self.conn.execute(
-            "SELECT document_id FROM documents WHERE repo = ? AND commit_hash = ?",
-            (repo, commit),
+            """
+            SELECT repo, commit_hash, schema_version, source_mode, capabilities_json,
+                   build_tool, build_failure_json, created_at_epoch_ms
+            FROM index_info
+            WHERE id = 1
+            LIMIT 1
+            """
         )
-        doc_ids = [str(row["document_id"]) for row in cur.fetchall()]
-        if not doc_ids:
+        row = cur.fetchone()
+        if row is None:
+            return None
+        caps = json.loads(row["capabilities_json"] or "[]")
+        if not isinstance(caps, list):
+            raise ReindexRequiredError("index_info.capabilities_json is invalid; rebuild this index")
+        return IndexInfo(
+            repo=str(row["repo"]),
+            commit_hash=str(row["commit_hash"]),
+            schema_version=str(row["schema_version"]),
+            source_mode=normalize_source_mode(str(row["source_mode"])),
+            capabilities=tuple(sorted(str(x) for x in caps)),
+            build_tool=str(row["build_tool"] or ""),
+            build_failure_json=str(row["build_failure_json"] or ""),
+            created_at_epoch_ms=int(row["created_at_epoch_ms"]),
+        )
+
+    def _validate_index_info_contract(self) -> None:
+        if not self._table_exists("index_info"):
             return
-        batch_size = 400
-        for i in range(0, len(doc_ids), batch_size):
-            batch = doc_ids[i : i + batch_size]
-            q_marks = ",".join(["?"] * len(batch))
-            if self._vector_delete_hook:
-                cur = self.conn.execute(
-                    f"SELECT chunk_id FROM chunks WHERE document_id IN ({q_marks})",
-                    tuple(batch),
+        cur = self.conn.execute("SELECT COUNT(*) AS c FROM index_info")
+        row = cur.fetchone()
+        count = int(row["c"]) if row is not None else 0
+        if count > 1:
+            raise ReindexRequiredError("index_info must contain exactly one row; rebuild this index")
+        info = self._load_index_info()
+        if info is None:
+            if self._has_any_index_data():
+                raise ReindexRequiredError(
+                    "index contains data but missing index_info row; rebuild this index with the current code"
                 )
-                chunk_ids = [str(row["chunk_id"]) for row in cur.fetchall()]
-                if chunk_ids:
-                    self._vector_delete_hook(chunk_ids)
-            self.conn.execute(
-                f"DELETE FROM relations WHERE evidence_document_id IN ({q_marks})",
-                tuple(batch),
+            self._index_info_cache = None
+            return
+        if info.schema_version != INDEX_SCHEMA_VERSION:
+            raise ReindexRequiredError(
+                f"unsupported index schema_version={info.schema_version!r}; rebuild this index"
             )
-            self.conn.execute(
-                f"DELETE FROM occurrences WHERE document_id IN ({q_marks})",
-                tuple(batch),
+        self._index_info_cache = info
+
+    def get_index_info(self) -> dict[str, object] | None:
+        info = self._index_info_cache or self._load_index_info()
+        if info is None:
+            return None
+        self._index_info_cache = info
+        return {
+            "repo": info.repo,
+            "commit_hash": info.commit_hash,
+            "schema_version": info.schema_version,
+            "source_mode": info.source_mode,
+            "capabilities": list(info.capabilities),
+            "build_tool": info.build_tool,
+            "build_failure_json": info.build_failure_json,
+            "created_at_epoch_ms": info.created_at_epoch_ms,
+        }
+
+    def get_source_mode(self) -> str:
+        info = self._index_info_cache or self._load_index_info()
+        if info is None:
+            return "unknown"
+        self._index_info_cache = info
+        return info.source_mode
+
+    def get_capabilities(self) -> tuple[str, ...]:
+        info = self._index_info_cache or self._load_index_info()
+        if info is None:
+            return ()
+        self._index_info_cache = info
+        return info.capabilities
+
+    def supports_capability(self, capability: str) -> bool:
+        return str(capability) in set(self.get_capabilities())
+
+    def require_capability(self, capability: str) -> None:
+        ensure_capability(self.get_capabilities(), capability, self.get_source_mode())
+
+    def prepare_index(
+        self,
+        repo: str,
+        commit: str,
+        *,
+        source_mode: str,
+        build_tool: str = "",
+        build_failure: dict[str, object] | None = None,
+    ) -> None:
+        existing = self._index_info_cache or self._load_index_info()
+        if existing is not None and (existing.repo != repo or existing.commit_hash != commit):
+            raise SnapshotMismatchError(
+                f"db snapshot mismatch: existing index is {existing.repo}@{existing.commit_hash}, requested {repo}@{commit}"
             )
-            self.conn.execute(
-                f"DELETE FROM embeddings WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE document_id IN ({q_marks}))",
-                tuple(batch),
+        source_mode_n = normalize_source_mode(source_mode)
+        created_at = int(time.time() * 1000)
+        self.conn.execute(
+            """
+            INSERT OR REPLACE INTO index_info(
+              id, repo, commit_hash, schema_version, source_mode, capabilities_json,
+              build_tool, build_failure_json, created_at_epoch_ms
+            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                repo,
+                commit,
+                INDEX_SCHEMA_VERSION,
+                source_mode_n,
+                json.dumps(capabilities_for_source_mode(source_mode_n)),
+                str(build_tool or ""),
+                json.dumps(build_failure or {}, ensure_ascii=False),
+                created_at,
+            ),
+        )
+        self._index_info_cache = IndexInfo(
+            repo=repo,
+            commit_hash=commit,
+            schema_version=INDEX_SCHEMA_VERSION,
+            source_mode=source_mode_n,
+            capabilities=tuple(capabilities_for_source_mode(source_mode_n)),
+            build_tool=str(build_tool or ""),
+            build_failure_json=json.dumps(build_failure or {}, ensure_ascii=False),
+            created_at_epoch_ms=created_at,
+        )
+
+    def clear_index_data(self) -> None:
+        tables = [
+            "chunks_fts",
+            "symbols_fts",
+            "embeddings",
+            "chunks",
+            "relations",
+            "occurrences",
+            "documents",
+            "symbols",
+            "code_edges",
+            "code_nodes",
+            "intent_communities",
+            "module_intents",
+            "intent_community_runs",
+            "intent_community_members_history",
+            "function_intents",
+            "llm_usage_events",
+        ]
+        for table_name in tables:
+            if self._table_exists(table_name):
+                self.conn.execute(f"DELETE FROM {table_name}")
+        self.commit()
+
+    def delete_repo_snapshot(self, repo: str, commit: str) -> None:
+        existing = self._index_info_cache or self._load_index_info()
+        if existing is not None and (existing.repo != repo or existing.commit_hash != commit):
+            raise SnapshotMismatchError(
+                f"db snapshot mismatch: existing index is {existing.repo}@{existing.commit_hash}, requested {repo}@{commit}"
             )
-            self.conn.execute(
-                f"DELETE FROM chunks_fts WHERE rowid IN (SELECT rowid FROM chunks WHERE document_id IN ({q_marks}))",
-                tuple(batch),
-            )
-            self.conn.execute(
-                f"DELETE FROM chunks WHERE document_id IN ({q_marks})",
-                tuple(batch),
-            )
-            self.conn.execute(
-                f"DELETE FROM documents WHERE document_id IN ({q_marks})",
-                tuple(batch),
-            )
+        if self._vector_delete_hook:
+            cur = self.conn.execute("SELECT chunk_id FROM chunks")
+            chunk_ids = [str(row["chunk_id"]) for row in cur.fetchall()]
+            if chunk_ids:
+                self._vector_delete_hook(chunk_ids)
+        self.clear_index_data()
 
     def delete_chunks_for_repo_commit(
         self,
@@ -288,6 +497,24 @@ class SqliteStore:
                     s.language,
                     s.signature_hash,
                     s.symbol_fingerprint,
+                )
+                for s in symbols
+            ],
+        )
+        self.conn.executemany(
+            "DELETE FROM symbols_fts WHERE symbol_id = ?",
+            [(s.symbol_id,) for s in symbols],
+        )
+        self.conn.executemany(
+            """
+            INSERT INTO symbols_fts(symbol_id, display_name, package)
+            VALUES (?, ?, ?)
+            """,
+            [
+                (
+                    s.symbol_id,
+                    s.display_name,
+                    s.package,
                 )
                 for s in symbols
             ],
@@ -409,6 +636,11 @@ class SqliteStore:
         )
         return [r["symbol_id"] for r in cur.fetchall()]
 
+    def _payload_with_source_mode(self, payload: Dict[str, object] | None = None) -> Dict[str, object]:
+        base = dict(payload or {})
+        base.setdefault("source_mode", self.get_source_mode())
+        return base
+
     @staticmethod
     def _intent_term_score(query: str, text: str, terms: List[str]) -> float:
         text_l = text.lower()
@@ -501,13 +733,15 @@ class SqliteStore:
                 result_type="definition",
                 score=1.0,
                 explain={"structure": 1.0},
-                payload={
-                    "symbol_id": symbol_id,
-                    "document_id": r["document_id"],
-                    "path": r["relative_path"],
-                    "start_line": r["range_start_line"],
-                    "start_col": r["range_start_col"],
-                },
+                payload=self._payload_with_source_mode(
+                    {
+                        "symbol_id": symbol_id,
+                        "document_id": r["document_id"],
+                        "path": r["relative_path"],
+                        "start_line": r["range_start_line"],
+                        "start_col": r["range_start_col"],
+                    }
+                ),
             )
             for r in cur.fetchall()
         ]
@@ -536,14 +770,16 @@ class SqliteStore:
                 result_type="reference_doc",
                 score=float(r["cnt"]),
                 explain={"structure": float(r["cnt"])},
-                payload={
-                    "symbol_id": symbol_id,
-                    "document_id": r["document_id"],
-                    "path": r["relative_path"],
-                    "reference_count": int(r["cnt"]),
-                    "explicit_reference_count": int(r["explicit_ref_cnt"] or 0),
-                    "inferred_reference_count": int(r["inferred_ref_cnt"] or 0),
-                },
+                payload=self._payload_with_source_mode(
+                    {
+                        "symbol_id": symbol_id,
+                        "document_id": r["document_id"],
+                        "path": r["relative_path"],
+                        "reference_count": int(r["cnt"]),
+                        "explicit_reference_count": int(r["explicit_ref_cnt"] or 0),
+                        "inferred_reference_count": int(r["inferred_ref_cnt"] or 0),
+                    }
+                ),
             )
             for r in cur.fetchall()
         ]
@@ -582,12 +818,14 @@ class SqliteStore:
                     "structure": float(r["confidence"]),
                     "code_edges": float(r["confidence"]),
                 },
-                payload={
-                    "symbol_id": str(r["symbol_id"]),
-                    "node_type": str(r["node_type"] or ""),
-                    "path": str(r["path"] or ""),
-                    "source": "code_edges",
-                },
+                payload=self._payload_with_source_mode(
+                    {
+                        "symbol_id": str(r["symbol_id"]),
+                        "node_type": str(r["node_type"] or ""),
+                        "path": str(r["path"] or ""),
+                        "source": "code_edges",
+                    }
+                ),
             )
             for r in cur.fetchall()
         ]
@@ -615,10 +853,12 @@ class SqliteStore:
                     "structure": float(r["confidence"]),
                     "relations": float(r["confidence"]),
                 },
-                payload={
-                    "symbol_id": str(r["symbol_id"]),
-                    "source": "relations",
-                },
+                payload=self._payload_with_source_mode(
+                    {
+                        "symbol_id": str(r["symbol_id"]),
+                        "source": "relations",
+                    }
+                ),
             )
             for r in cur.fetchall()
         ]
@@ -658,36 +898,88 @@ class SqliteStore:
         relation_results = self._relation_call_results(symbol_id, top_k, reverse=True)
         return self._merge_ranked_results(graph_results, relation_results, top_k)
 
-    def symbol_exact(self, query: str, top_k: int) -> List[QueryResult]:
-        """按 query 词项在「display_name + symbol_id」上的命中数打分。
+    def _symbol_search_candidates(self, query: str, limit: int) -> List[sqlite3.Row]:
+        q = (query or "").strip()
+        if not q:
+            return []
+        ql = q.lower()
+        seen: set[str] = set()
+        rows: list[sqlite3.Row] = []
+        like_limit = max(limit, 50)
+        cur = self.conn.execute(
+            """
+            SELECT symbol_id, display_name, kind, package, language, enclosing_symbol
+            FROM symbols
+            WHERE lower(display_name) LIKE ? OR lower(symbol_id) LIKE ?
+            ORDER BY
+              CASE WHEN lower(display_name) = ? THEN 0 ELSE 1 END,
+              length(display_name),
+              symbol_id
+            LIMIT ?
+            """,
+            (f"%{ql}%", f"%{ql}%", ql, like_limit),
+        )
+        for row in cur.fetchall():
+            sid = str(row["symbol_id"])
+            if sid in seen:
+                continue
+            seen.add(sid)
+            rows.append(row)
 
-        symbol_id 含 maven 坐标与源码路径（如 io/netty/buffer/AbstractByteBuf#readBytes），
-        便于用「类名、包路径、方法名」等组合缩小候选，避免仅靠 display_name（常为短方法名）时大量撞名。
-        """
+        terms = [t for t in re.split(r"[^A-Za-z0-9_]+", q) if t]
+        if terms and self._table_exists("symbols_fts"):
+            fts_query = " OR ".join(f'"{t}"' for t in terms)
+            cur = self.conn.execute(
+                """
+                SELECT s.symbol_id, s.display_name, s.kind, s.package, s.language, s.enclosing_symbol
+                FROM symbols_fts
+                JOIN symbols s ON s.symbol_id = symbols_fts.symbol_id
+                WHERE symbols_fts MATCH ?
+                ORDER BY bm25(symbols_fts)
+                LIMIT ?
+                """,
+                (fts_query, max(limit, 50)),
+            )
+            for row in cur.fetchall():
+                sid = str(row["symbol_id"])
+                if sid in seen:
+                    continue
+                seen.add(sid)
+                rows.append(row)
+        return rows
+
+    def symbol_exact(self, query: str, top_k: int) -> List[QueryResult]:
         query_terms = [t.strip().lower() for t in query.split() if t.strip()]
         ql = query.lower().strip()
-        cur = self.conn.execute("SELECT symbol_id, display_name FROM symbols")
-        scored = []
-        for r in cur.fetchall():
-            name = r["display_name"].lower()
-            sid = r["symbol_id"].lower()
+        scored: list[QueryResult] = []
+        for r in self._symbol_search_candidates(query, max(50, top_k * 8)):
+            name = str(r["display_name"]).lower()
+            sid = str(r["symbol_id"]).lower()
             haystack = f"{name} {sid}"
             if ql in haystack:
                 score = 2.0
+                if name == ql:
+                    score += 2.0
             else:
                 score = float(sum(1 for t in query_terms if t in haystack))
             if score <= 0:
                 continue
             scored.append(
                 QueryResult(
-                    result_id=r["symbol_id"],
+                    result_id=str(r["symbol_id"]),
                     result_type="symbol",
                     score=score,
                     explain={"symbol_exact": score},
-                    payload={"display_name": r["display_name"]},
+                    payload=self._payload_with_source_mode(
+                        {
+                            "display_name": str(r["display_name"]),
+                            "kind": str(r["kind"] or ""),
+                            "package": str(r["package"] or ""),
+                        }
+                    ),
                 )
             )
-        scored.sort(key=lambda x: x.score, reverse=True)
+        scored.sort(key=lambda x: (x.score, x.result_id), reverse=True)
         return scored[:top_k]
 
     def find_entities(
@@ -832,7 +1124,9 @@ class SqliteStore:
                 result_type="chunk",
                 score=float(-r["score"]),
                 explain={"keyword": float(-r["score"])},
-                payload={"path": r["relative_path"], "document_id": r["document_id"]},
+                payload=self._payload_with_source_mode(
+                    {"path": r["relative_path"], "document_id": r["document_id"]}
+                ),
             )
             for r in rows
         ]
@@ -947,6 +1241,7 @@ class SqliteStore:
             "language": row["language"],
             "start_line": row["span_start_line"],
             "end_line": row["span_end_line"],
+            "source_mode": self.get_source_mode(),
         }
         if include_content:
             result["content"] = row["content"]
@@ -993,6 +1288,7 @@ class SqliteStore:
                 "start_line": row["range_start_line"],
                 "end_line": row["range_end_line"],
                 "code": "",
+                "source_mode": self.get_source_mode(),
             }
         lines = content.splitlines()
         start_line = int(row["range_start_line"])
@@ -1006,4 +1302,5 @@ class SqliteStore:
             "start_line": lo,
             "end_line": hi,
             "code": snippet,
+            "source_mode": self.get_source_mode(),
         }

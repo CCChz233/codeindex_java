@@ -9,6 +9,8 @@ import asyncio
 import json
 from typing import Any
 
+from .index_contract import ReindexRequiredError, UnsupportedCapabilityError
+
 # --- Stable error codes (UPPER_SNAKE; do not rename lightly) ---
 
 CONFIG_INVALID = "CONFIG_INVALID"
@@ -19,6 +21,9 @@ INPUT_VALIDATION = "INPUT_VALIDATION"
 
 UNSUPPORTED_OPERATION = "UNSUPPORTED_OPERATION"
 """Operation name or enum not in the allowed set (e.g. symbol_graph ``op``, ``graph_mode``)."""
+
+UNSUPPORTED_CAPABILITY = "UNSUPPORTED_CAPABILITY"
+"""Index source mode does not provide this operation/capability."""
 
 RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
 """Reserved; most queries return empty lists instead of this error."""
@@ -70,6 +75,33 @@ def exception_to_mcp_error(exc: BaseException, db_path: str | None) -> dict[str,
     msg = sanitize_for_client(raw, db_path)
     name = type(exc).__name__
     lower = raw.lower()
+
+    if isinstance(exc, UnsupportedCapabilityError):
+        return mcp_error(
+            UNSUPPORTED_CAPABILITY,
+            msg,
+            retryable=False,
+            suggested_next_steps=[
+                "Use an index built from source_mode=scip for refs/calls and full graph operations.",
+                "For syntax/document fallback indexes, prefer semantic_query or simpler definition/entity lookups.",
+            ],
+            details={
+                "exception_type": name,
+                "capability": exc.capability,
+                "source_mode": exc.source_mode,
+            },
+        )
+
+    if isinstance(exc, ReindexRequiredError):
+        return mcp_error(
+            CONFIG_INVALID,
+            msg,
+            retryable=False,
+            suggested_next_steps=[
+                "Rebuild this SQLite index with the current code before serving or querying it.",
+            ],
+            details={"exception_type": name},
+        )
 
     if isinstance(exc, (TimeoutError, asyncio.TimeoutError)) or (
         "timeout" in lower or "timed out" in lower
