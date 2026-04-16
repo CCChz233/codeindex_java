@@ -7,7 +7,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict
 
-from .admin_index_jobs import get_job, list_jobs, submit_java_full_index
+from .admin_index_jobs import (
+    IndexJobConflictError,
+    IndexJobQueueFullError,
+    configure_index_job_scheduler,
+    get_job,
+    list_jobs,
+    submit_java_full_index,
+)
 from .dsl import Query, callees_of as dsl_callees_of, callers_of as dsl_callers_of, def_of as dsl_def_of, refs_of as dsl_refs_of
 from .entity_query import entity_types, find_entity
 from .graph_service import GraphService
@@ -99,6 +106,52 @@ class QueryHandler(BaseHTTPRequestHandler):
             ]
         }
 
+    @staticmethod
+    def _submit_admin_index_job(req: dict[str, Any]) -> tuple[dict[str, Any], int]:
+        try:
+            submit = submit_java_full_index(
+                req,
+                serve_db_path=QueryHandler.serve_db_path,
+            )
+        except ValueError as exc:
+            return (
+                {"error": "bad_request", "message": str(exc)},
+                HTTPStatus.BAD_REQUEST,
+            )
+        except IndexJobConflictError as exc:
+            return (
+                {
+                    "error": "job_conflict",
+                    "message": str(exc),
+                    "conflict_on": exc.conflict_on,
+                    "existing_job_id": exc.existing_job_id,
+                },
+                HTTPStatus.CONFLICT,
+            )
+        except IndexJobQueueFullError as exc:
+            return (
+                {
+                    "error": "queue_full",
+                    "message": str(exc),
+                    "max_queue_size": exc.max_queue_size,
+                },
+                HTTPStatus.TOO_MANY_REQUESTS,
+            )
+        except Exception as exc:
+            return (
+                {"error": "internal_error", "message": str(exc)},
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+            )
+        return (
+            {
+                "job_id": submit.job_id,
+                "status": submit.status,
+                "deduped": submit.deduped,
+                "poll_url_hint": f"/admin/index-jobs/{submit.job_id}",
+            },
+            HTTPStatus.OK,
+        )
+
     def do_POST(self) -> None:  # noqa: N802
         post_path = self.path.split("?", 1)[0]
         try:
@@ -116,24 +169,8 @@ class QueryHandler(BaseHTTPRequestHandler):
             if not QueryHandler._admin_token_ok(self):
                 self._json_response({"error": "forbidden"}, status=HTTPStatus.FORBIDDEN)
                 return
-            try:
-                job_id = submit_java_full_index(
-                    req,
-                    serve_db_path=QueryHandler.serve_db_path,
-                )
-            except ValueError as exc:
-                self._json_response(
-                    {"error": "bad_request", "message": str(exc)},
-                    status=HTTPStatus.BAD_REQUEST,
-                )
-                return
-            except Exception as exc:
-                self._json_response(
-                    {"error": "internal_error", "message": str(exc)},
-                    status=HTTPStatus.INTERNAL_SERVER_ERROR,
-                )
-                return
-            self._json_response({"job_id": job_id, "poll_url_hint": f"/admin/index-jobs/{job_id}"})
+            payload, status = QueryHandler._submit_admin_index_job(req)
+            self._json_response(payload, status=status)
             return
 
         if QueryHandler.service is None or QueryHandler.graph_service is None:
@@ -324,6 +361,7 @@ def run_server(
     vector_runtime: Dict[str, object] | None = None,
     chunk_runtime: Dict[str, object] | None = None,
     query_runtime: Dict[str, object] | None = None,
+    admin_index_runtime: Dict[str, object] | None = None,
     default_embedding_version: str = "v1",
 ) -> None:
     store = SqliteStore(db_path)
@@ -334,6 +372,13 @@ def run_server(
         QueryHandler.serve_db_path = db_path
     QueryHandler.embedding_runtime = embedding_runtime or {}
     QueryHandler.vector_runtime = vector_runtime or {}
+    acfg = admin_index_runtime or {}
+    if not isinstance(acfg, dict):
+        acfg = {}
+    configure_index_job_scheduler(
+        max_concurrent_jobs=int(acfg.get("max_concurrent_jobs", 2)),
+        max_queue_size=int(acfg.get("max_queue_size", 16)),
+    )
     embedding_pipeline = make_embedding_pipeline(
         store, embedding_runtime, vector_runtime, chunk_runtime=chunk_runtime
     )

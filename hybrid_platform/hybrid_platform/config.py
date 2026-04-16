@@ -128,6 +128,10 @@ class AppConfig:
             },
             "eval": {"mode": "hybrid", "top_k": 10},
             "server": {"host": "0.0.0.0", "port": 8080},
+            "admin_index": {
+                "max_concurrent_jobs": 2,
+                "max_queue_size": 16,
+            },
             "intent": {
                 "intent_pipeline_version": "llm-v1",
                 "intent_prompt_version": "p1",

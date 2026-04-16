@@ -960,6 +960,10 @@ def _query_section_from_args(args: argparse.Namespace) -> dict[str, object]:
     return _cfg(args).get_section("query")
 
 
+def _admin_index_section_from_args(args: argparse.Namespace) -> dict[str, object]:
+    return _cfg(args).get_section("admin_index")
+
+
 def cmd_serve(args: argparse.Namespace) -> None:
     run_server(
         db_path=args.db,
@@ -969,6 +973,7 @@ def cmd_serve(args: argparse.Namespace) -> None:
         vector_runtime=_vector_runtime_config(args),
         chunk_runtime=_chunk_section_from_args(args),
         query_runtime=_query_section_from_args(args),
+        admin_index_runtime=_admin_index_section_from_args(args),
         default_embedding_version=_resolve_embedding_version(args),
     )
 
