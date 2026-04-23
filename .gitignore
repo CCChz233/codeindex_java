@@ -36,7 +36,7 @@ hybrid_platform/pytest-of-root/
 dist/
 build/
 
-# --- 虚拟环境（勿提交到 GitHub；本地用 myenv/bin/python -m pip install -r requirements.txt 重建）---
+# --- 虚拟环境（勿提交到 GitHub；本地重建）---
 hybrid_platform/myenv/
 .venv/
 venv/
@@ -49,11 +49,20 @@ venv/
 .DS_Store
 Thumbs.db
 
-# --- Java / Maven 构建输出 ---
+# --- Java / Maven / Gradle 构建输出 ---
 **/target/
+.gradle/
 
 # --- 统一工作区（所有 worktree、索引、缓存、日志）---
 workspace/
+
+# --- 运行日志与进程文件 ---
+*.log
+*.pid
+
+# --- 本地环境与密钥 ---
+.env
+.env.*
 
 # --- 其它常见大文件 / 缓存 ---
 *.zip

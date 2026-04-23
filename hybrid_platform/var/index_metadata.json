@@ -5,41 +5,271 @@
       "slug": "OpenAPITools_openapi-generator_473343ff94d11a3f36507cde2b371d2165df6cb8",
       "repo": "OpenAPITools/openapi-generator",
       "commit": "473343ff94d11a3f36507cde2b371d2165df6cb8",
-      "db_path": "/data1/qadong/codeindex_java/hybrid_platform/var/hybrid_indices/OpenAPITools_openapi-generator_473343ff94d11a3f36507cde2b371d2165df6cb8.db",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/OpenAPITools_openapi-generator_473343ff94d11a3f36507cde2b371d2165df6cb8.db",
       "mcp_path": "/mcp/OpenAPITools_openapi-generator_473343ff94d11a3f36507cde2b371d2165df6cb8",
-      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/config/java_eval_vllm_bge_m3_config.json",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
       "status": "ready",
-      "updated_at": "2026-04-09T11:09:29.743200+00:00"
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
+    },
+    {
+      "slug": "OpenRefine_OpenRefine_02c80d0e49bb11c0b21d62d47a5ca13cb11048a9",
+      "repo": "OpenRefine/OpenRefine",
+      "commit": "02c80d0e49bb11c0b21d62d47a5ca13cb11048a9",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/OpenRefine_OpenRefine_02c80d0e49bb11c0b21d62d47a5ca13cb11048a9.db",
+      "mcp_path": "/mcp/OpenRefine_OpenRefine_02c80d0e49bb11c0b21d62d47a5ca13cb11048a9",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
+    },
+    {
+      "slug": "OpenRefine_OpenRefine_a461220681f024ab7b0836934b1176de3ab24d28",
+      "repo": "OpenRefine/OpenRefine",
+      "commit": "a461220681f024ab7b0836934b1176de3ab24d28",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/OpenRefine_OpenRefine_a461220681f024ab7b0836934b1176de3ab24d28.db",
+      "mcp_path": "/mcp/OpenRefine_OpenRefine_a461220681f024ab7b0836934b1176de3ab24d28",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
     },
     {
       "slug": "TimefoldAI_timefold-solver_1a86e96b4607a71b7d7874def546f4ade1b71d06",
       "repo": "TimefoldAI/timefold-solver",
       "commit": "1a86e96b4607a71b7d7874def546f4ade1b71d06",
-      "db_path": "/data1/qadong/codeindex_java/hybrid_platform/var/hybrid_indices/TimefoldAI_timefold-solver_1a86e96b4607a71b7d7874def546f4ade1b71d06.db",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/TimefoldAI_timefold-solver_1a86e96b4607a71b7d7874def546f4ade1b71d06.db",
       "mcp_path": "/mcp/TimefoldAI_timefold-solver_1a86e96b4607a71b7d7874def546f4ade1b71d06",
-      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/config/java_eval_deterministic_config.json",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
       "status": "ready",
-      "updated_at": "2026-04-13T02:23:01.529804+00:00"
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
+    },
+    {
+      "slug": "TimefoldAI_timefold-solver_728dc36e29c2c1a143208ac22c7f95054f8bc4d6",
+      "repo": "TimefoldAI/timefold-solver",
+      "commit": "728dc36e29c2c1a143208ac22c7f95054f8bc4d6",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/TimefoldAI_timefold-solver_728dc36e29c2c1a143208ac22c7f95054f8bc4d6.db",
+      "mcp_path": "/mcp/TimefoldAI_timefold-solver_728dc36e29c2c1a143208ac22c7f95054f8bc4d6",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
+    },
+    {
+      "slug": "apache_pinot_f0d29a069587e091dbe7db8ad603afd2f72158fe",
+      "repo": "apache/pinot",
+      "commit": "f0d29a069587e091dbe7db8ad603afd2f72158fe",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/apache_pinot_f0d29a069587e091dbe7db8ad603afd2f72158fe.db",
+      "mcp_path": "/mcp/apache_pinot_f0d29a069587e091dbe7db8ad603afd2f72158fe",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
     },
     {
       "slug": "dapr_java-sdk_dcaca773b3864d815e7796fc2460bcec360e5e49",
       "repo": "dapr/java-sdk",
       "commit": "dcaca773b3864d815e7796fc2460bcec360e5e49",
-      "db_path": "/data1/qadong/codeindex_java/hybrid_platform/var/hybrid_indices/dapr_java-sdk_dcaca773b3864d815e7796fc2460bcec360e5e49.db",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/dapr_java-sdk_dcaca773b3864d815e7796fc2460bcec360e5e49.db",
       "mcp_path": "/mcp/dapr_java-sdk_dcaca773b3864d815e7796fc2460bcec360e5e49",
-      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/config/java_eval_deterministic_config.json",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
       "status": "ready",
-      "updated_at": "2026-04-08T08:39:45.014756+00:00"
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
+    },
+    {
+      "slug": "georchestra_georchestra_5a89214d7fb5825454c2af4ef5107fa0ce57c562",
+      "repo": "georchestra/georchestra",
+      "commit": "5a89214d7fb5825454c2af4ef5107fa0ce57c562",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/georchestra_georchestra_5a89214d7fb5825454c2af4ef5107fa0ce57c562.db",
+      "mcp_path": "/mcp/georchestra_georchestra_5a89214d7fb5825454c2af4ef5107fa0ce57c562",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
+    },
+    {
+      "slug": "hapifhir_hapi-fhir_844649dc061e923650fff02429437449d70805a2",
+      "repo": "hapifhir/hapi-fhir",
+      "commit": "844649dc061e923650fff02429437449d70805a2",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/hapifhir_hapi-fhir_844649dc061e923650fff02429437449d70805a2.db",
+      "mcp_path": "/mcp/hapifhir_hapi-fhir_844649dc061e923650fff02429437449d70805a2",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
+    },
+    {
+      "slug": "helidon-io_helidon_74d06e72ec9af45d3a4fbecd72c369596d658b53",
+      "repo": "helidon-io/helidon",
+      "commit": "74d06e72ec9af45d3a4fbecd72c369596d658b53",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/helidon-io_helidon_74d06e72ec9af45d3a4fbecd72c369596d658b53.db",
+      "mcp_path": "/mcp/helidon-io_helidon_74d06e72ec9af45d3a4fbecd72c369596d658b53",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
+    },
+    {
+      "slug": "helidon-io_helidon_fe01e1385351dc464f33d8af19ee66454d5a86c6",
+      "repo": "helidon-io/helidon",
+      "commit": "fe01e1385351dc464f33d8af19ee66454d5a86c6",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/helidon-io_helidon_fe01e1385351dc464f33d8af19ee66454d5a86c6.db",
+      "mcp_path": "/mcp/helidon-io_helidon_fe01e1385351dc464f33d8af19ee66454d5a86c6",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
+    },
+    {
+      "slug": "jetty_jetty.project_639e287866970654c31faa9bece4c289a8ba36e7",
+      "repo": "jetty/jetty.project",
+      "commit": "639e287866970654c31faa9bece4c289a8ba36e7",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/jetty_jetty.project_639e287866970654c31faa9bece4c289a8ba36e7.db",
+      "mcp_path": "/mcp/jetty_jetty.project_639e287866970654c31faa9bece4c289a8ba36e7",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
+    },
+    {
+      "slug": "jetty_jetty.project_a607ec6af5560eea444399989515341524442091",
+      "repo": "jetty/jetty.project",
+      "commit": "a607ec6af5560eea444399989515341524442091",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/jetty_jetty.project_a607ec6af5560eea444399989515341524442091.db",
+      "mcp_path": "/mcp/jetty_jetty.project_a607ec6af5560eea444399989515341524442091",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
+    },
+    {
+      "slug": "keycloak_keycloak_1eba022149550c3c94cd784910c605a7e1956a5f",
+      "repo": "keycloak/keycloak",
+      "commit": "1eba022149550c3c94cd784910c605a7e1956a5f",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/keycloak_keycloak_1eba022149550c3c94cd784910c605a7e1956a5f.db",
+      "mcp_path": "/mcp/keycloak_keycloak_1eba022149550c3c94cd784910c605a7e1956a5f",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
+    },
+    {
+      "slug": "keycloak_keycloak_236d2f9f62ee41c641988cd2931f4b85a58d0f54",
+      "repo": "keycloak/keycloak",
+      "commit": "236d2f9f62ee41c641988cd2931f4b85a58d0f54",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/keycloak_keycloak_236d2f9f62ee41c641988cd2931f4b85a58d0f54.db",
+      "mcp_path": "/mcp/keycloak_keycloak_236d2f9f62ee41c641988cd2931f4b85a58d0f54",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
+    },
+    {
+      "slug": "keycloak_keycloak_5387aef0fa727ea5cae4816f682ec72798fabaa4",
+      "repo": "keycloak/keycloak",
+      "commit": "5387aef0fa727ea5cae4816f682ec72798fabaa4",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/keycloak_keycloak_5387aef0fa727ea5cae4816f682ec72798fabaa4.db",
+      "mcp_path": "/mcp/keycloak_keycloak_5387aef0fa727ea5cae4816f682ec72798fabaa4",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
+    },
+    {
+      "slug": "keycloak_keycloak_b997d0506f042cf32eb90bf36159e113fd5c2e21",
+      "repo": "keycloak/keycloak",
+      "commit": "b997d0506f042cf32eb90bf36159e113fd5c2e21",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/keycloak_keycloak_b997d0506f042cf32eb90bf36159e113fd5c2e21.db",
+      "mcp_path": "/mcp/keycloak_keycloak_b997d0506f042cf32eb90bf36159e113fd5c2e21",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
     },
     {
       "slug": "ls1intum_Artemis_7364749a8de08befd5f96e9dfecf6d13e241944a",
       "repo": "ls1intum/Artemis",
       "commit": "7364749a8de08befd5f96e9dfecf6d13e241944a",
-      "db_path": "/data1/qadong/codeindex_java/hybrid_platform/var/hybrid_indices/ls1intum_Artemis_7364749a8de08befd5f96e9dfecf6d13e241944a.db",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/ls1intum_Artemis_7364749a8de08befd5f96e9dfecf6d13e241944a.db",
       "mcp_path": "/mcp/ls1intum_Artemis_7364749a8de08befd5f96e9dfecf6d13e241944a",
-      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/config/default_config.json",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
       "status": "ready",
-      "updated_at": "2026-04-07T05:39:09.458760+00:00"
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
+    },
+    {
+      "slug": "netty_netty_966af01e78eaecc122cf61f917abcfacc1f95756",
+      "repo": "netty/netty",
+      "commit": "966af01e78eaecc122cf61f917abcfacc1f95756",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/netty_netty_966af01e78eaecc122cf61f917abcfacc1f95756.db",
+      "mcp_path": "/mcp/netty_netty_966af01e78eaecc122cf61f917abcfacc1f95756",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
+    },
+    {
+      "slug": "nom-tam-fits_nom-tam-fits_ba91e0138a3dee2264eacb127d5827fc0ad38d49",
+      "repo": "nom-tam-fits/nom-tam-fits",
+      "commit": "ba91e0138a3dee2264eacb127d5827fc0ad38d49",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/nom-tam-fits_nom-tam-fits_ba91e0138a3dee2264eacb127d5827fc0ad38d49.db",
+      "mcp_path": "/mcp/nom-tam-fits_nom-tam-fits_ba91e0138a3dee2264eacb127d5827fc0ad38d49",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
+    },
+    {
+      "slug": "quarkusio_quarkus_3280e471d2107cbcde0b8e8964cd38421918ac27",
+      "repo": "quarkusio/quarkus",
+      "commit": "3280e471d2107cbcde0b8e8964cd38421918ac27",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/quarkusio_quarkus_3280e471d2107cbcde0b8e8964cd38421918ac27.db",
+      "mcp_path": "/mcp/quarkusio_quarkus_3280e471d2107cbcde0b8e8964cd38421918ac27",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
+    },
+    {
+      "slug": "quarkusio_quarkus_5be22575c7b027a8dde751dd34ea408acb43c6f6",
+      "repo": "quarkusio/quarkus",
+      "commit": "5be22575c7b027a8dde751dd34ea408acb43c6f6",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/quarkusio_quarkus_5be22575c7b027a8dde751dd34ea408acb43c6f6.db",
+      "mcp_path": "/mcp/quarkusio_quarkus_5be22575c7b027a8dde751dd34ea408acb43c6f6",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
+    },
+    {
+      "slug": "trinodb_trino_98ea57616550a584e75155967f0f3b4e3e2b2fa8",
+      "repo": "trinodb/trino",
+      "commit": "98ea57616550a584e75155967f0f3b4e3e2b2fa8",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/trinodb_trino_98ea57616550a584e75155967f0f3b4e3e2b2fa8.db",
+      "mcp_path": "/mcp/trinodb_trino_98ea57616550a584e75155967f0f3b4e3e2b2fa8",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
+    },
+    {
+      "slug": "vaadin_flow_7a51e5b8e01673338ba6e9783a66546b9a5f2ddc",
+      "repo": "vaadin/flow",
+      "commit": "7a51e5b8e01673338ba6e9783a66546b9a5f2ddc",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/vaadin_flow_7a51e5b8e01673338ba6e9783a66546b9a5f2ddc.db",
+      "mcp_path": "/mcp/vaadin_flow_7a51e5b8e01673338ba6e9783a66546b9a5f2ddc",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
+    },
+    {
+      "slug": "vaadin_flow_97aa4590f3d601d73ae22fd833091809149ac1c1",
+      "repo": "vaadin/flow",
+      "commit": "97aa4590f3d601d73ae22fd833091809149ac1c1",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/vaadin_flow_97aa4590f3d601d73ae22fd833091809149ac1c1.db",
+      "mcp_path": "/mcp/vaadin_flow_97aa4590f3d601d73ae22fd833091809149ac1c1",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
+    },
+    {
+      "slug": "vaadin_flow_a553b6bf47cd6ea0d28c2a1bb049fe65ebd10cbc",
+      "repo": "vaadin/flow",
+      "commit": "a553b6bf47cd6ea0d28c2a1bb049fe65ebd10cbc",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/vaadin_flow_a553b6bf47cd6ea0d28c2a1bb049fe65ebd10cbc.db",
+      "mcp_path": "/mcp/vaadin_flow_a553b6bf47cd6ea0d28c2a1bb049fe65ebd10cbc",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
+    },
+    {
+      "slug": "vaadin_hilla_56ec9926df65eacca465adbfd83f55fc4f704f18",
+      "repo": "vaadin/hilla",
+      "commit": "56ec9926df65eacca465adbfd83f55fc4f704f18",
+      "db_path": "/data1/qadong/codeindex_java/workspace/indices/vaadin_hilla_56ec9926df65eacca465adbfd83f55fc4f704f18.db",
+      "mcp_path": "/mcp/vaadin_hilla_56ec9926df65eacca465adbfd83f55fc4f704f18",
+      "config_path": "/data1/qadong/codeindex_java/hybrid_platform/var/server_vllm_generic_config.json",
+      "status": "ready",
+      "updated_at": "2026-04-20T11:15:00.957993+00:00"
     }
   ]
 }
