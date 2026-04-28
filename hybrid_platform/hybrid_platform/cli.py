@@ -30,8 +30,10 @@ from .java_indexer import JavaIndexRequest, JavaIndexer
 from .entity_eval import entity_eval_report_to_json, format_entity_eval_metrics, run_entity_eval
 from .grep_baseline import grep_baseline_report_to_json, run_grep_baseline
 from .entity_query import entity_types, find_entity
+from .index_accuracy_eval import run_index_accuracy_eval
 from .index_build_runner import run_java_full_index_pipeline
 from .index_contract import IndexContractError, UnsupportedCapabilityError
+from .retrieval_compare_eval import run_retrieval_compare_eval
 from .runtime_factory import make_embedding_pipeline_from_app_config, make_vector_stores
 from .storage import SqliteStore
 from .vector_store import SqliteVectorStore
@@ -649,6 +651,57 @@ def cmd_eval(args: argparse.Namespace) -> None:
             top_k=int(_resolve(args, "top_k", "eval", "top_k", 10)),
         )
         _print_json(Evaluator.format_metrics(metrics))
+    finally:
+        store.close()
+
+
+def cmd_eval_index_accuracy(args: argparse.Namespace) -> None:
+    store = SqliteStore(args.db)
+    try:
+        service = _make_service(store, args)
+        report = run_index_accuracy_eval(
+            store=store,
+            service=service,
+            dataset_path=args.dataset,
+            repo=args.repo,
+            commit=args.commit,
+            top_k=int(args.top_k or 10),
+            mode=str(args.mode or "hybrid"),
+            embedding_version=_resolve_embedding_version(args),
+        )
+        if args.output:
+            output = Path(args.output)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        _print_json(report)
+    finally:
+        store.close()
+
+
+def cmd_eval_retrieval_compare(args: argparse.Namespace) -> None:
+    store = SqliteStore(args.db)
+    try:
+        report = run_retrieval_compare_eval(
+            store=store,
+            embedding_pipeline=_make_embedding_pipeline(store, args),
+            dataset_path=args.dataset,
+            repo=args.repo,
+            commit=args.commit,
+            embedding_version=_resolve_embedding_version(args),
+            top_ks=getattr(args, "top_k", None),
+            include_commit_mismatches=bool(args.include_commit_mismatches),
+        )
+        if args.output:
+            output = Path(args.output)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        _print_json(report)
     finally:
         store.close()
 
@@ -1334,6 +1387,56 @@ def build_parser() -> argparse.ArgumentParser:
     ev.add_argument("--mode", choices=["structure", "semantic", "hybrid"], default=None)
     ev.add_argument("--top-k", type=int, default=None)
     ev.set_defaults(func=cmd_eval)
+
+    eia = _subparser_with_config(
+        sub,
+        "eval-index-accuracy",
+        help="对已生成 index 做结构+检索准确度评测（JSONL cases: entity/retrieval/graph）",
+    )
+    eia.add_argument("--db", required=True)
+    eia.add_argument("--repo", required=True)
+    eia.add_argument("--commit", required=True)
+    eia.add_argument("--dataset", required=True)
+    eia.add_argument("--top-k", type=int, default=10)
+    eia.add_argument("--mode", choices=["semantic", "hybrid"], default="hybrid")
+    eia.add_argument(
+        "--embedding-version",
+        default=None,
+        dest="embedding_version",
+        help="retrieval case 使用的向量版本；默认取配置 embedding.version",
+    )
+    eia.add_argument("--output", default="", help="可选：将完整 JSON report 写入文件")
+    eia.set_defaults(func=cmd_eval_index_accuracy)
+
+    erc = _subparser_with_config(
+        sub,
+        "eval-retrieval-compare",
+        help="对比纯 dense semantic_search 与 SQLite FTS5 BM25 召回准确度",
+    )
+    erc.add_argument("--db", required=True)
+    erc.add_argument("--repo", required=True)
+    erc.add_argument("--commit", required=True)
+    erc.add_argument("--dataset", required=True)
+    erc.add_argument(
+        "--top-k",
+        action="append",
+        type=int,
+        default=None,
+        help="可重复传入；默认评测 5 和 10，例如 --top-k 5 --top-k 10",
+    )
+    erc.add_argument(
+        "--embedding-version",
+        default=None,
+        dest="embedding_version",
+        help="dense 检索使用的向量版本；默认取配置 embedding.version",
+    )
+    erc.add_argument(
+        "--include-commit-mismatches",
+        action="store_true",
+        help="不按 repo_sha == --commit 过滤 reviewed JSONL 样本",
+    )
+    erc.add_argument("--output", default="", help="可选：将完整 JSON report 写入文件")
+    erc.set_defaults(func=cmd_eval_retrieval_compare)
 
     evg = _subparser_with_config(sub, "eval-graph")
     evg.add_argument("--db", required=True)
