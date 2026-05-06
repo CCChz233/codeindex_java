@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import List
+from typing import List, Sequence
 
 from .models import OccurrenceEdge, RelationEdge, RepoSnapshot, ScipDocument, SymbolNode
 from .parser import parse_scip_stream
@@ -35,6 +35,10 @@ class IngestionPipeline:
         source_mode: str = "scip",
         build_tool: str = "",
         build_failure: dict[str, object] | None = None,
+        source_backend: str = "",
+        backend_version: str = "",
+        backend_stats: dict[str, object] | None = None,
+        capabilities: Sequence[str] | None = None,
     ) -> IngestionStats:
         _ = RepoSnapshot(
             repo=repo,
@@ -48,6 +52,10 @@ class IngestionPipeline:
             source_mode=source_mode,
             build_tool=build_tool,
             build_failure=build_failure,
+            source_backend=source_backend,
+            backend_version=backend_version,
+            backend_stats=backend_stats,
+            capabilities=capabilities,
         )
         self.store.clear_index_data()
 

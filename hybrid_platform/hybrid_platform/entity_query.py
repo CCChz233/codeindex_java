@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 
 # 用户侧 type -> symbols.kind 取值（SCIP/Java 常见）
 _ENTITY_TYPE_TO_KINDS: dict[str, Optional[Tuple[str, ...]]] = {
+    "package": ("Package",),
+    "import": ("Import",),
     "class": ("Class", "Record"),
     "interface": ("Interface",),
     "enum": ("Enum",),

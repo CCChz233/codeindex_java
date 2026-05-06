@@ -15,6 +15,16 @@ VALID_SOURCE_MODES = {
     SOURCE_MODE_DOCUMENT,
 }
 
+SOURCE_BACKEND_SCIP_JAVA = "scip-java"
+SOURCE_BACKEND_TREE_SITTER_JAVA = "tree-sitter-java"
+SOURCE_BACKEND_DOCUMENT = "document"
+
+VALID_SOURCE_BACKENDS = {
+    SOURCE_BACKEND_SCIP_JAVA,
+    SOURCE_BACKEND_TREE_SITTER_JAVA,
+    SOURCE_BACKEND_DOCUMENT,
+}
+
 FALLBACK_MODE_OFF = "off"
 FALLBACK_MODE_SYNTAX = "syntax"
 FALLBACK_MODE_DOCUMENT = "document"
@@ -48,6 +58,8 @@ CAPABILITIES_BY_SOURCE_MODE = {
     SOURCE_MODE_SYNTAX: (
         CAP_FIND_ENTITY,
         CAP_DEF,
+        CAP_REF,
+        CAP_CALL,
         CAP_HIERARCHY,
         CAP_KEYWORD,
         CAP_HYBRID,
@@ -66,6 +78,23 @@ def normalize_source_mode(source_mode: str) -> str:
     if mode not in VALID_SOURCE_MODES:
         raise ValueError(f"unsupported source_mode: {source_mode!r}")
     return mode
+
+
+def normalize_source_backend(source_backend: str) -> str:
+    backend = (source_backend or "").strip().lower()
+    if backend not in VALID_SOURCE_BACKENDS:
+        allowed = ", ".join(sorted(VALID_SOURCE_BACKENDS))
+        raise ValueError(f"unsupported source_backend: {source_backend!r}; allowed: {allowed}")
+    return backend
+
+
+def default_source_backend_for_mode(source_mode: str) -> str:
+    mode = normalize_source_mode(source_mode)
+    if mode == SOURCE_MODE_SCIP:
+        return SOURCE_BACKEND_SCIP_JAVA
+    if mode == SOURCE_MODE_SYNTAX:
+        return SOURCE_BACKEND_TREE_SITTER_JAVA
+    return SOURCE_BACKEND_DOCUMENT
 
 
 def normalize_fallback_mode(fallback_mode: str) -> str:
@@ -89,6 +118,9 @@ class IndexInfo:
     capabilities: tuple[str, ...]
     build_tool: str
     build_failure_json: str
+    source_backend: str
+    backend_version: str
+    backend_stats_json: str
     created_at_epoch_ms: int
 
 

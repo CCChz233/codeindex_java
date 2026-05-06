@@ -286,7 +286,7 @@ ls -lh /data/codeindex/indices/owner_repo_abc123.db
 - `refs_of`：推荐 `files`
 - `callers_of` / `callees_of`：推荐 `symbols`
 
-如果 index 是 `source_mode=syntax`，`callers_of` 和 `callees_of` 通常不可用，报告会标记为 `unsupported_capability`，不会当成程序崩溃。
+旧版 `source_mode=syntax` 可能没有 call capability；新版 `source_backend=tree-sitter-java` 会暴露 best-effort refs/calls。报告仍会把实际 `index_info.capabilities` 作为准入判断。
 
 ## 6. 一个完整 eval.jsonl 示例
 
@@ -394,24 +394,20 @@ ls -lh /data/codeindex/indices/owner_repo_abc123.db
 
 适合完整评测 `entity/retrieval/graph`。
 
-### 8.2 source_mode=syntax
+### 8.2 source_mode=syntax / source_backend=tree-sitter-java
 
-通常来自 tree-sitter fallback。能力通常支持：
+通常来自无编译 tree-sitter Java 后端。能力通常支持：
 
 - `find_entity`
 - `def`
+- `ref`
+- `call`
 - `hierarchy`
 - `keyword`
 - `hybrid`
 - `semantic`
 
-通常不支持：
-
-- `refs_of`
-- `callers_of`
-- `callees_of`
-
-因此 graph case 里如果测 calls，会看到 `unsupported_capability`。这不是评测模块坏了，而是该 index 本身没有 call capability。
+其中 `ref` / `call` 是源码解析下的保守 best-effort，不等价于编译型 Java 类型系统。
 
 ### 8.3 source_mode=document
 
@@ -506,10 +502,11 @@ ls -lh /data/codeindex/indices/owner_repo_abc123.db
 
 ### 10.3 `graph` 的 callers/callees 是 `unsupported_capability`
 
-这通常是 index 由 tree-sitter fallback 构建，`source_mode=syntax`。syntax 模式一般没有 call capability。处理方式：
+这通常说明当前 index 的 capabilities 里没有 call。处理方式：
 
-- 如果你要测 tree-sitter fallback，就不要把 callers/callees 作为硬失败
-- 如果你要测完整调用关系，需要用 `source_mode=scip` 的 index
+- 先看 `index_info.source_backend` 与 `index_info.capabilities`
+- 若是 document 后端，不要把 callers/callees 作为硬失败
+- 若需要编译型精度，使用 `source_backend=scip-java`
 
 ### 10.4 `expected.files` 明明对，但没有命中
 

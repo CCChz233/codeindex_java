@@ -35,7 +35,7 @@
    - 用 Nginx/Caddy 等做 **TLS** 与访问控制；
    - 防火墙仅对 Agent 所在网段或固定 IP 开放端口；
    - **`POST /admin/purge-chunks`** 需请求头 `X-Admin-Token`，与进程环境变量 `HYBRID_ADMIN_TOKEN` 一致，**不要**交给通用 Agent 工具列表。
-   - **`POST /admin/index-jobs`**（异步一键构建：scip-java → ingest → build-code-graph → chunk → embed）同样使用 `X-Admin-Token`；**不提供 MCP 工具**，仅给后端/运维调用。可选环境变量 **`HYBRID_ADMIN_INDEX_ALLOW_PREFIXES`**：逗号分隔的绝对路径前缀，`repo_root` 与 `db_path` 解析后须落在某一前缀之下（未设置则不校验前缀）。
+   - **`POST /admin/index-jobs`**（异步一键构建：source backend → ingest → build-code-graph → chunk → embed；后端由配置里的 `java_index.source_backend` 选择）同样使用 `X-Admin-Token`；**不提供 MCP 工具**，仅给后端/运维调用。可选环境变量 **`HYBRID_ADMIN_INDEX_ALLOW_PREFIXES`**：逗号分隔的绝对路径前缀，`repo_root` 与 `db_path` 解析后须落在某一前缀之下（未设置则不校验前缀）。
 
 4. Agent 侧基址示例：`http://45.78.221.74:8765`（若前面有反代，则为 `https://your-domain`）。
 

@@ -147,6 +147,7 @@ vim /data/codeindex/config/spring_eval_config.json
 ```json
 {
   "java_index": {
+    "source_backend": "tree-sitter-java",
     "scip_java_cmd": "/data/codeindex_java/hybrid_platform/scripts/run-scip-java-spring62.sh",
     "build_tool": "gradle",
     "output": "index.scip",
@@ -174,7 +175,8 @@ vim /data/codeindex/config/spring_eval_config.json
 
 需要替换：
 
-- `scip_java_cmd`：服务器上实际可用的 scip-java 或 Spring 6.2 包装脚本路径
+- `source_backend`：`tree-sitter-java` 为无编译索引；`scip-java` 为编译型 SCIP 索引；`document` 为最低能力文本索引
+- `scip_java_cmd`：仅 `source_backend=scip-java` 时使用，指向服务器上实际可用的 scip-java 或 Spring 6.2 包装脚本路径
 - `embedding.model`：你的 embedding 模型名
 - `embedding.dim`：模型输出维度，必须和实际输出一致
 - `embedding.api_base` / `endpoint`：服务器可访问的 embedding 服务地址
@@ -205,6 +207,7 @@ python -m hybrid_platform.cli --config /data/codeindex/config/spring_eval_config
   --repo spring-projects/spring-framework \
   --commit 6ec2455e2491650fbeb7efaf78615a72700995ad \
   --db /data/codeindex/indices/spring-framework-6ec2455e.db \
+  --source-backend tree-sitter-java \
   --build-tool gradle \
   --fallback-mode syntax
 ```
@@ -212,12 +215,12 @@ python -m hybrid_platform.cli --config /data/codeindex/config/spring_eval_config
 `build-java-index` 会跑完整链路：
 
 ```text
-scip-java -> ingest -> code graph -> chunk -> embed
+source backend -> ingest -> code graph -> chunk -> embed
 ```
 
 因此建完以后不需要再单独跑 `embed`。
 
-如果 scip-java 或 Gradle 失败，且 `fallback_mode=syntax`，命令会降级为 tree-sitter syntax index。报告里的 `index_info.source_mode` 会显示最终模式。对 BM25/dense 召回评测来说，syntax fallback 仍可评测文件/chunk 召回，但结构能力会弱于 SCIP。
+如果选择 `tree-sitter-java`，构建不会触发 scip-java/Gradle；如果选择 `scip-java`，会走编译型 SCIP 路径。报告里的 `index_info.source_backend` 和 `index_info.source_mode` 会显示最终模式。
 
 ### 6.5 跑 BM25 vs Dense 评测
 

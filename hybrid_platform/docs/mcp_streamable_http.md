@@ -97,8 +97,8 @@ app = build_streamable_app()
 用于批量测试或多版本索引并列时，可用统一 slug：``{sanitize(repo)}_{commit_sha}``（commit 为小写 hex，长度 7–40）。
 
 - **Python**：`hybrid_platform.index_slug` 中 `repo_commit_slug`、`index_db_path`、`mcp_http_path`。
-- **一键构建**（Java：`index-java` → `build-code-graph` → `chunk` → `embed`）：`scripts/index_build_repo_commit.sh`  
-  推荐命令行：`--config`、`--repo-name`、`--commit`、`--repo-root`；可选 `--output-dir`、`--build-tool`、**`--java-home`**（指定 JDK，如 Java 21）；仍可用同名环境变量（命令行优先）。`--` 之后为 `index-java` 的编译参数（如 `-DskipTests`）。
+- **一键构建**（Java：`source backend` → `build-code-graph` → `chunk` → `embed`）：`scripts/index_build_repo_commit.sh`
+  推荐命令行：`--config`、`--repo-name`、`--commit`、`--repo-root`；通过配置 `java_index.source_backend` 或 CLI `--source-backend` 选择 `tree-sitter-java`（无编译）、`scip-java`（编译）或 `document`。使用 `scip-java` 时可选 `--build-tool`、**`--java-home`**（指定 JDK，如 Java 21）；`--` 之后为 scip-java 的编译参数（如 `-DskipTests`）。
 - **先克隆再构建**、**linux/amd64 + JDK 版本**：见 **[java_index_repo_setup.md](./java_index_repo_setup.md)**（含 `clone_repo_at_commit.sh`）。
 - **一键 clone → 构建 → 启动 MCP**：`scripts/repo_commit_to_mcp.sh`（stderr 中 `PIPELINE_STAGE_*` 标记各阶段；失败搜 `PIPELINE_STAGE_FAILED`）。
 - **启动 MCP**：`scripts/mcp_start_repo_commit.sh --config … --repo-name … --commit …`（推导 `HYBRID_DB` 与 `HYBRID_MCP_PATH=/mcp/<slug>`；等价于 `cli mcp-streamable --db --mcp-path`）。

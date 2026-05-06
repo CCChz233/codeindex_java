@@ -470,6 +470,7 @@ def cmd_build_java_index(args: argparse.Namespace) -> None:
     config_inline = json.loads(json.dumps(args.app_config.values))
     jcfg = dict(config_inline.get("java_index", {}) or {})
     overrides = {
+        "source_backend": getattr(args, "source_backend", None),
         "output": getattr(args, "output", None),
         "scip_java_cmd": getattr(args, "scip_java_cmd", None),
         "build_tool": getattr(args, "build_tool", None),
@@ -1088,12 +1089,18 @@ def build_parser() -> argparse.ArgumentParser:
     build_java = _subparser_with_config(
         sub,
         "build-java-index",
-        help="正式全链路入口：scip-java -> ingest -> build-code-graph -> chunk -> embed；支持 fallback",
+        help="正式全链路入口：source backend -> ingest -> build-code-graph -> chunk -> embed",
     )
     build_java.add_argument("--repo-root", required=True)
     build_java.add_argument("--repo", required=True)
     build_java.add_argument("--commit", required=True)
     build_java.add_argument("--db", required=True)
+    build_java.add_argument(
+        "--source-backend",
+        choices=["scip-java", "tree-sitter-java", "document"],
+        default=None,
+        help="索引来源后端；scip-java 会编译，tree-sitter-java/document 不编译",
+    )
     build_java.add_argument("--output", default=None)
     build_java.add_argument("--index-version", default=None)
     build_java.add_argument("--batch-size", type=int, default=None)

@@ -1,6 +1,6 @@
-# SCIP Hybrid Retrieval Platform
+# Hybrid Code Retrieval Platform
 
-该目录实现了基于 `.scip` 的 SDD 落地版本，当前已开始向 Java / `scip-java` 主链路演进，覆盖：
+该目录实现代码索引与混合检索平台。当前 Java 支持两类同级索引后端：`scip-java`（编译型 SCIP 后端）与 `tree-sitter-java`（无编译源码后端），并保留最低能力的 `document` 文本后端。平台覆盖：
 
 - P0: schema 与 query DSL
 - P1: `.scip` 流式解析与规范化
@@ -12,7 +12,8 @@
 ## 目录结构
 
 - `specs/`: 各阶段规格文档
-- `src/hybrid_platform/`: 运行时代码
+- `hybrid_platform/`: 运行时代码
+- `docs/ARCHITECTURE_MODULES.md`: 架构与模块维护说明
 - `examples/`: 示例数据与评测样本
 
 ## 快速开始
@@ -89,17 +90,31 @@ python -m hybrid_platform.cli eval-baseline-compare \
 
 输出含：**同一 `k`**（与 `--top-k` 一致）下 `find_entity_returned_count` / `grep_matched_total_count`、`find_entity_recall@k` / `grep_recall@k`（grep 为路径**字典序**前 `k` 个文件能否覆盖 GT 源文件）、以及不截断的 `grep_recall_files`。`gap` 中对比 **mean** 两边的 `recall@k`。`k` 较小时若 GT 符号/文件排序靠后，两侧 recall 会明显下降，便于和「全搜出来」区分。
 
-Java 项目也可以直接通过 `scip-java` 建索引并自动 ingest：
+Java 项目推荐使用完整流水线 `build-java-index`，通过 `--source-backend` 显式选择是否编译。
+
+无编译后端（默认配置推荐）：
 
 ```bash
-python -m hybrid_platform.cli index-java \
+python -m hybrid_platform.cli build-java-index \
   --repo-root /path/to/java-repo \
   --repo demo/java-repo \
   --commit abc123 \
-  --db examples/java.db
+  --db examples/java.db \
+  --source-backend tree-sitter-java
 ```
 
-如果 `scip-java index` 自动模式失败，可以显式走 SemanticDB 兜底：
+编译型 SCIP 后端：
+
+```bash
+python -m hybrid_platform.cli build-java-index \
+  --repo-root /path/to/java-repo \
+  --repo demo/java-repo \
+  --commit abc123 \
+  --db examples/java.db \
+  --source-backend scip-java
+```
+
+低层调试入口 `index-java` 仍只执行 `scip-java + ingest`。如果 `scip-java index` 自动模式失败，可以显式走 SemanticDB 兜底：
 
 ```bash
 python -m hybrid_platform.cli index-java \
@@ -191,15 +206,15 @@ python -m hybrid_platform.cli --config config/local_config.json query --db examp
 
 对于超大仓库，建议将全量 `.scip` 先切分为多个文件并并行执行 ingest。
 
-## Java / `scip-java`
+## Java source backends
 
-新增 `index-java` 命令用于打通 `Java repo -> scip-java -> ingest`：
+`build-java-index` 是正式全链路入口：`source backend -> ingest -> build-code-graph -> chunk -> embed`。`--source-backend` 可选：
 
-- 自动识别 `Maven` / `Gradle`
-- 支持显式指定 `--build-tool`
-- 支持传递 `scip-java` 命令位置 `--scip-java-cmd`
-- 支持 `--semanticdb-targetroot` 走手动兜底链路
-- `index-java` 成功后会自动调用现有 ingest 管线
+- `tree-sitter-java`：不编译，直接解析 `.java`，提取类型/方法/字段/继承/项目内 best-effort refs/calls/field_refs。
+- `scip-java`：调用 `scip-java`，可自动识别 `Maven` / `Gradle`，支持 `--build-tool`、`--scip-java-cmd`、`--semanticdb-targetroot`。
+- `document`：不提符号，只做文档/chunk 层面的 keyword/semantic/hybrid 检索。
+
+`fallback_mode` 仍兼容旧配置；新配置应优先使用 `java_index.source_backend` 或 CLI `--source-backend` 做显式选择。
 
 当前全局代码图正在从原来的函数中心模型演进到 Java 场景的结构图，目标节点层级为：
 

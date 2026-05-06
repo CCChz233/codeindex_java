@@ -370,7 +370,7 @@ class CodeGraphBuilder:
             FROM relations r
             JOIN code_nodes src ON src.symbol_id = r.from_symbol
             JOIN code_nodes dst ON dst.symbol_id = r.to_symbol
-            WHERE r.relation_type IN ('calls', 'extends', 'implements')
+            WHERE r.relation_type IN ('calls', 'extends', 'implements', 'field_refs')
             GROUP BY src.node_id, dst.node_id, r.relation_type
             """
         )
@@ -547,7 +547,7 @@ class CodeGraphBuilder:
             before = self.store.conn.total_changes
             self.store.conn.executemany(
                 """
-                INSERT OR REPLACE INTO code_edges(
+                INSERT OR IGNORE INTO code_edges(
                   edge_id, src_node, dst_node, edge_type, weight, confidence, evidence_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,

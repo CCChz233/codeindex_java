@@ -30,6 +30,7 @@ class AppConfig:
                 "source_root": "",
             },
             "java_index": {
+                "source_backend": "",
                 "scip_java_cmd": "scip-java",
                 "build_tool": "",
                 "output": "index.scip",

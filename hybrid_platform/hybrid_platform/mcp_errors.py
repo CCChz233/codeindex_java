@@ -82,8 +82,8 @@ def exception_to_mcp_error(exc: BaseException, db_path: str | None) -> dict[str,
             msg,
             retryable=False,
             suggested_next_steps=[
-                "Use an index built from source_mode=scip for refs/calls and full graph operations.",
-                "For syntax/document fallback indexes, prefer semantic_query or simpler definition/entity lookups.",
+                "Use an index whose source_backend exposes the requested capability.",
+                "Document-only indexes support semantic/keyword retrieval but not symbol graph operations.",
             ],
             details={
                 "exception_type": name,

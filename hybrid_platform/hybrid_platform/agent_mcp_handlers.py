@@ -204,6 +204,8 @@ class CodeindexMcpRuntime:
                     "entity_type": entity_type,
                     "name": name,
                     "match": match,
+                    "source_mode": self.store.get_source_mode(),
+                    "source_backend": self.store.get_source_backend(),
                     "count": len(entities),
                     "entities": entities,
                     "supported_types": list(entity_types()),

@@ -5,7 +5,7 @@ Mac 仅作为 Docker 宿主机，通过 `docker buildx` / `docker run --platform
 
 ## 镜像职责
 
-- `indexer` target：clone / `scip-java` / ingest / build-code-graph / chunk / embed / metadata
+- `indexer` target：clone / source backend（`tree-sitter-java` 无编译或 `scip-java` 编译）/ ingest / build-code-graph / chunk / embed / metadata
 - `runtime` target：`serve` REST 或 `mcp-streamable`
 
 远程 embedding 仍作为外部依赖，继续通过外部挂载的 JSON 配置文件传入。
@@ -67,7 +67,7 @@ docker run --rm --platform linux/amd64 \
   --config /config/config.json
 ```
 
-附加的 Maven / Gradle / `scip-java` 参数写在单独的 `--` 之后：
+索引后端由挂载的配置文件 `java_index.source_backend` 决定；无编译索引用 `tree-sitter-java`，编译型索引用 `scip-java`。附加的 Maven / Gradle / `scip-java` 参数写在单独的 `--` 之后：
 
 ```bash
 docker run --rm --platform linux/amd64 \

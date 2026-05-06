@@ -19,7 +19,7 @@
 ### 1.2 系统依赖（索引侧）
 
 - **JDK**：与目标仓库一致（常见 Java 21）；`JAVA_HOME` 必须指向含 `bin/java` 的根目录。
-- **scip-java**：由配置 `java_index.scip_java_cmd` 指定，默认可指向仓库内包装脚本（如 `scripts/run-scip-java-spring62.sh`）。
+- **source backend**：由配置 `java_index.source_backend` 或 CLI `--source-backend` 指定。`tree-sitter-java` 不编译源码；`scip-java` 由 `java_index.scip_java_cmd` 指定并会触发构建工具；`document` 只做文档级索引。
 - **构建工具**：Maven 或 Gradle，须与项目一致（例如 Artemis 用 Gradle）。
 
 ### 1.3 系统依赖（MCP 网关侧）
@@ -62,8 +62,8 @@ CLI 调试：
 
 流水线与 **`index_build_runner.run_java_full_index_pipeline`** 及 Shell **`scripts/index_build_repo_commit.sh`** 对齐：
 
-1. **scip-java**：在 `--repo-root` 下编译并生成 **`.scip`**（或 SemanticDB 再转 SCIP，视配置而定）。
-2. **ingest**：将 SCIP 写入 SQLite（symbols/documents/occurrences 等）。
+1. **source backend**：`tree-sitter-java` 直接解析源码，或 `scip-java` 编译并生成 `.scip`，或 `document` 扫描 Java 文件文本。
+2. **ingest**：将后端产物写入 SQLite（symbols/documents/occurrences/relations 等；document 后端只有 documents）。
 3. **build-code-graph**：构建调用图等 **`code_edges`**，供 chunk 阶段 **call context** 使用。  
    **必须在 chunk 之前**；若跳过，chunk 仍可跑，但图相关上下文缺失。
 4. **chunk**：按 AST/策略切分代码块写入库表。
@@ -76,13 +76,13 @@ Shell 脚本 **`index_build_repo_commit.sh`** 中阶段名为：`index-java` →
 
 | 步骤 | 用户入口 | 核心实现 |
 |------|----------|----------|
-| scip + ingest | `python -m hybrid_platform.cli index-java ...` | `cli.cmd_index_java` → `JavaIndexer.run` → `IngestionPipeline.run` |
+| source + ingest | `python -m hybrid_platform.cli build-java-index --source-backend ...` | `index_build_runner.run_java_full_index_pipeline` → 选定 source backend |
 | 调用图 | `cli build-code-graph` | `CodeGraphBuilder` |
 | 分块 | `cli chunk` | 配置驱动的 embedding pipeline 的 `build_chunks` |
 | 向量 | `cli embed` | 同上 pipeline 的 `run` |
 | 程序化整链 | `index_build_runner.run_java_full_index_pipeline` | 与上顺序一致，供 Admin 任务等调用 |
 
-**`java_indexer.py`**：`JavaIndexer` 拼出 scip-java 命令（`index` 或 `index-semanticdb`），在 `repo_root` 下 `subprocess.run`，产出 `.scip` 路径。
+**`source_indexer.py`**：封装 `scip-java`、`tree-sitter-java`、`document` 三种后端。`java_indexer.py` 仍只负责拼出 scip-java 命令（`index` 或 `index-semanticdb`）。
 
 **`ingestion.py`**：`IngestionPipeline` 读 SCIP，写入 `SqliteStore`。
 
@@ -216,6 +216,7 @@ cd hybrid_platform
 | `hybrid_platform/mcp_streamable_server.py` | 单进程 Streamable MCP |
 | `hybrid_platform/mcp_streamable_asgi.py` | Bearer 包装 |
 | `hybrid_platform/mcp_tools_registry.py` | MCP 工具注册 |
+| `hybrid_platform/source_indexer.py` | source backend 抽象与 scip-java/tree-sitter-java/document 后端封装 |
 | `hybrid_platform/java_indexer.py` | scip-java 调用 |
 | `hybrid_platform/ingestion.py` | SCIP → SQLite |
 | `hybrid_platform/index_build_runner.py` | 程序化整链（与脚本顺序一致） |

@@ -6,6 +6,7 @@
     "source_root": ""
   },
   "java_index": {
+    "source_backend": "tree-sitter-java",
     "scip_java_cmd": "/data1/qadong/codeindex_java/hybrid_platform/scripts/run-scip-java-spring62.sh",
     "build_tool": "",
     "output": "index.scip",

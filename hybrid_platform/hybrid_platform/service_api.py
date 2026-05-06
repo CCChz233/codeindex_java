@@ -265,6 +265,8 @@ class QueryHandler(BaseHTTPRequestHandler):
                         "entity_type": entity_type,
                         "name": name,
                         "match": match,
+                        "source_mode": QueryHandler.store.get_source_mode(),
+                        "source_backend": QueryHandler.store.get_source_backend(),
                         "count": len(hits),
                         "entities": [
                             {

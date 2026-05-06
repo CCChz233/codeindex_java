@@ -34,6 +34,25 @@
 
 ---
 
+## java_index
+
+### `java_index.source_backend`（默认配置：`tree-sitter-java`）
+- **含义**：Java 索引来源后端。`tree-sitter-java` 不编译源码；`scip-java` 会调用 scip-java/Maven/Gradle；`document` 只做文档级索引。
+- **可选值**：`tree-sitter-java | scip-java | document`
+- **作用范围**：`build-java-index`、HTTP `/admin/index-jobs`
+- **建议**：需要无编译索引用 `tree-sitter-java`；需要编译型高精度 SCIP 索引用 `scip-java`。
+
+### `java_index.scip_java_cmd`（默认：项目配置中的 scip-java 包装脚本或 `scip-java`）
+- **含义**：`source_backend=scip-java` 时使用的命令。
+- **作用范围**：`build-java-index --source-backend scip-java`、`index-java`
+
+### `java_index.fallback_mode`（legacy，默认：`syntax`）
+- **含义**：兼容旧配置；仅当未显式设置 `source_backend` 时，scip-java 失败后的降级模式。
+- **可选值**：`off | syntax | document`
+- **建议**：新配置不要依赖它，改用显式 `source_backend`。
+
+---
+
 ## chunk
 
 当前切块策略为：**`ast` 优先**。优先使用 SCIP `enclosing_range` 的 AST 节点范围切块；Java 在缺少可靠 AST 范围时，可用 `tree-sitter-java` 兜底；最后才回退到 definition-span。
@@ -505,4 +524,3 @@
 ### `graph_query.min_seed_score`（默认：`0.0`）
 - **含义**：seed 融合后的最小保留分数阈值。
 - **作用范围**：`query-graph`（`explore` 模式）
-

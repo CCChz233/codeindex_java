@@ -15,7 +15,9 @@ from .index_contract import (
     ReindexRequiredError,
     SnapshotMismatchError,
     capabilities_for_source_mode,
+    default_source_backend_for_mode,
     ensure_capability,
+    normalize_source_backend,
     normalize_source_mode,
 )
 from .models import Chunk, OccurrenceEdge, QueryResult, RelationEdge, ScipDocument, SymbolNode
@@ -31,6 +33,9 @@ CREATE TABLE IF NOT EXISTS index_info (
   capabilities_json TEXT NOT NULL,
   build_tool TEXT NOT NULL DEFAULT '',
   build_failure_json TEXT NOT NULL DEFAULT '',
+  source_backend TEXT NOT NULL DEFAULT '',
+  backend_version TEXT NOT NULL DEFAULT '',
+  backend_stats_json TEXT NOT NULL DEFAULT '{}',
   created_at_epoch_ms INTEGER NOT NULL
 );
 
@@ -179,6 +184,9 @@ class SqliteStore:
         self._ensure_column("occurrences", "enclosing_range_start_col", "INTEGER NOT NULL DEFAULT -1")
         self._ensure_column("occurrences", "enclosing_range_end_line", "INTEGER NOT NULL DEFAULT -1")
         self._ensure_column("occurrences", "enclosing_range_end_col", "INTEGER NOT NULL DEFAULT -1")
+        self._ensure_column("index_info", "source_backend", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("index_info", "backend_version", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("index_info", "backend_stats_json", "TEXT NOT NULL DEFAULT '{}'")
 
     def _table_exists(self, table_name: str) -> bool:
         row = self.conn.execute(
@@ -223,7 +231,8 @@ class SqliteStore:
         cur = self.conn.execute(
             """
             SELECT repo, commit_hash, schema_version, source_mode, capabilities_json,
-                   build_tool, build_failure_json, created_at_epoch_ms
+                   build_tool, build_failure_json, source_backend, backend_version,
+                   backend_stats_json, created_at_epoch_ms
             FROM index_info
             WHERE id = 1
             LIMIT 1
@@ -243,6 +252,11 @@ class SqliteStore:
             capabilities=tuple(sorted(str(x) for x in caps)),
             build_tool=str(row["build_tool"] or ""),
             build_failure_json=str(row["build_failure_json"] or ""),
+            source_backend=normalize_source_backend(
+                str(row["source_backend"] or default_source_backend_for_mode(str(row["source_mode"])))
+            ),
+            backend_version=str(row["backend_version"] or ""),
+            backend_stats_json=str(row["backend_stats_json"] or "{}"),
             created_at_epoch_ms=int(row["created_at_epoch_ms"]),
         )
 
@@ -281,6 +295,9 @@ class SqliteStore:
             "capabilities": list(info.capabilities),
             "build_tool": info.build_tool,
             "build_failure_json": info.build_failure_json,
+            "source_backend": info.source_backend,
+            "backend_version": info.backend_version,
+            "backend_stats_json": info.backend_stats_json,
             "created_at_epoch_ms": info.created_at_epoch_ms,
         }
 
@@ -290,6 +307,13 @@ class SqliteStore:
             return "unknown"
         self._index_info_cache = info
         return info.source_mode
+
+    def get_source_backend(self) -> str:
+        info = self._index_info_cache or self._load_index_info()
+        if info is None:
+            return "unknown"
+        self._index_info_cache = info
+        return info.source_backend
 
     def get_capabilities(self) -> tuple[str, ...]:
         info = self._index_info_cache or self._load_index_info()
@@ -312,6 +336,10 @@ class SqliteStore:
         source_mode: str,
         build_tool: str = "",
         build_failure: dict[str, object] | None = None,
+        source_backend: str = "",
+        backend_version: str = "",
+        backend_stats: dict[str, object] | None = None,
+        capabilities: Sequence[str] | None = None,
     ) -> None:
         existing = self._index_info_cache or self._load_index_info()
         if existing is not None and (existing.repo != repo or existing.commit_hash != commit):
@@ -319,22 +347,28 @@ class SqliteStore:
                 f"db snapshot mismatch: existing index is {existing.repo}@{existing.commit_hash}, requested {repo}@{commit}"
             )
         source_mode_n = normalize_source_mode(source_mode)
+        source_backend_n = normalize_source_backend(source_backend or default_source_backend_for_mode(source_mode_n))
+        capabilities_n = sorted(str(x) for x in (capabilities or capabilities_for_source_mode(source_mode_n)))
         created_at = int(time.time() * 1000)
         self.conn.execute(
             """
             INSERT OR REPLACE INTO index_info(
               id, repo, commit_hash, schema_version, source_mode, capabilities_json,
-              build_tool, build_failure_json, created_at_epoch_ms
-            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+              build_tool, build_failure_json, source_backend, backend_version,
+              backend_stats_json, created_at_epoch_ms
+            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 repo,
                 commit,
                 INDEX_SCHEMA_VERSION,
                 source_mode_n,
-                json.dumps(capabilities_for_source_mode(source_mode_n)),
+                json.dumps(capabilities_n),
                 str(build_tool or ""),
                 json.dumps(build_failure or {}, ensure_ascii=False),
+                source_backend_n,
+                str(backend_version or ""),
+                json.dumps(backend_stats or {}, ensure_ascii=False),
                 created_at,
             ),
         )
@@ -343,9 +377,12 @@ class SqliteStore:
             commit_hash=commit,
             schema_version=INDEX_SCHEMA_VERSION,
             source_mode=source_mode_n,
-            capabilities=tuple(capabilities_for_source_mode(source_mode_n)),
+            capabilities=tuple(capabilities_n),
             build_tool=str(build_tool or ""),
             build_failure_json=json.dumps(build_failure or {}, ensure_ascii=False),
+            source_backend=source_backend_n,
+            backend_version=str(backend_version or ""),
+            backend_stats_json=json.dumps(backend_stats or {}, ensure_ascii=False),
             created_at_epoch_ms=created_at,
         )
 
@@ -639,6 +676,7 @@ class SqliteStore:
     def _payload_with_source_mode(self, payload: Dict[str, object] | None = None) -> Dict[str, object]:
         base = dict(payload or {})
         base.setdefault("source_mode", self.get_source_mode())
+        base.setdefault("source_backend", self.get_source_backend())
         return base
 
     @staticmethod

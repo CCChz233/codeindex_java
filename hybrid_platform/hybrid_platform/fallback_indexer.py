@@ -3,9 +3,10 @@ from __future__ import annotations
 import hashlib
 import re
 import time
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Iterator, Sequence
+from typing import AbstractSet, Iterable, Iterator, Mapping, Sequence
 
 from .models import OccurrenceEdge, RelationEdge, ScipDocument, SymbolNode
 from .storage import SqliteStore
@@ -148,6 +149,67 @@ def _child_by_type(node: object, target_type: str) -> object | None:
     return None
 
 
+def _child_by_field_name(node: object, field_name: str) -> object | None:
+    child_by_field_name = getattr(node, "child_by_field_name", None)
+    if not callable(child_by_field_name):
+        return None
+    return child_by_field_name(field_name)
+
+
+def _same_node(left: object | None, right: object | None) -> bool:
+    if left is None or right is None:
+        return False
+    return (
+        int(getattr(left, "start_byte", -1)) == int(getattr(right, "start_byte", -2))
+        and int(getattr(left, "end_byte", -1)) == int(getattr(right, "end_byte", -2))
+    )
+
+
+def _is_child_field(parent: object | None, field_name: str, child: object) -> bool:
+    if parent is None:
+        return False
+    return _same_node(_child_by_field_name(parent, field_name), child)
+
+
+def _extract_java_imports(content: str) -> _ImportContext:
+    direct: dict[str, str] = {}
+    wildcard_packages: list[str] = []
+    pattern = re.compile(r"^\s*import\s+(?:static\s+)?([A-Za-z_][A-Za-z0-9_$.]*)(\.\*)?\s*;", re.MULTILINE)
+    for match in pattern.finditer(content):
+        qualified = match.group(1).strip()
+        is_wildcard = bool(match.group(2))
+        if is_wildcard:
+            wildcard_packages.append(qualified)
+            continue
+        short = qualified.rsplit(".", 1)[-1]
+        direct[short] = qualified
+    return _ImportContext(direct=direct, wildcard_packages=tuple(wildcard_packages))
+
+
+def _argument_count(node: object) -> int:
+    args = _child_by_field_name(node, "arguments") or _child_by_type(node, "argument_list")
+    if args is None:
+        return 0
+    return len(_named_children(args))
+
+
+def _type_text_from_node(node: object | None, source_bytes: bytes) -> str:
+    if node is None:
+        return ""
+    return _node_text(node, source_bytes).strip()
+
+
+def _first_type_child(node: object) -> object | None:
+    typed = _child_by_field_name(node, "type")
+    if typed is not None:
+        return typed
+    for child in _named_children(node):
+        ctype = str(getattr(child, "type", ""))
+        if "type" in ctype or ctype in {"identifier", "scoped_identifier"}:
+            return child
+    return None
+
+
 @dataclass(frozen=True)
 class _TypeSymbol:
     symbol_id: str
@@ -157,12 +219,45 @@ class _TypeSymbol:
 
 
 @dataclass(frozen=True)
+class _MethodSymbol:
+    symbol_id: str
+    owner_qualified_name: str
+    simple_name: str
+    arity: int
+    package: str
+    relative_path: str
+    is_constructor: bool = False
+
+
+@dataclass(frozen=True)
+class _FieldSymbol:
+    symbol_id: str
+    owner_qualified_name: str
+    simple_name: str
+    package: str
+    relative_path: str
+    declared_type: str = ""
+
+
+@dataclass(frozen=True)
+class _ImportContext:
+    direct: Mapping[str, str]
+    wildcard_packages: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class _PendingRelation:
     from_symbol: str
     relation_type: str
     target_name: str
     relative_path: str
     package: str
+    imports: _ImportContext
+    range_start_line: int = -1
+    range_start_col: int = -1
+    range_end_line: int = -1
+    range_end_col: int = -1
+    syntax_kind: str = ""
 
 
 class SyntaxFallbackIndexer:
@@ -180,6 +275,9 @@ class SyntaxFallbackIndexer:
         relations: list[RelationEdge] = []
         pending: list[_PendingRelation] = []
         known_types: list[_TypeSymbol] = []
+        known_methods: list[_MethodSymbol] = []
+        known_fields: list[_FieldSymbol] = []
+        doc_imports: dict[str, _ImportContext] = {}
 
         root = Path(repo_root).resolve()
         for path in _iter_java_files(repo_root):
@@ -187,6 +285,8 @@ class SyntaxFallbackIndexer:
             content = path.read_text(encoding="utf-8", errors="replace")
             source_bytes = content.encode("utf-8")
             tree = parser.parse(source_bytes)
+            imports = _extract_java_imports(content)
+            doc_imports[relative_path] = imports
             package_name = ""
             package_node = _child_by_type(tree.root_node, "package_declaration")
             if package_node is not None:
@@ -197,6 +297,70 @@ class SyntaxFallbackIndexer:
             doc_occurrences: list[OccurrenceEdge] = []
             doc_pending: list[_PendingRelation] = []
             doc_types: list[_TypeSymbol] = []
+            document_id = f"{repo}:{commit}:{relative_path}"
+
+            if package_name and package_node is not None:
+                package_symbol_id = f"pkg:{package_name}"
+                package_name_node = _child_by_type(package_node, "scoped_identifier") or _find_name_node(package_node)
+                package_name_node = package_name_node or package_node
+                kind = "Package"
+                doc_symbols.append(
+                    SymbolNode(
+                        symbol_id=package_symbol_id,
+                        display_name=package_name,
+                        kind=kind,
+                        package=package_name,
+                        signature_hash=_sha1(package_symbol_id),
+                        symbol_fingerprint=_fingerprint(package_symbol_id, package_name, kind),
+                        language="java",
+                    )
+                )
+                sl, sc, el, ec = _range_from_node(package_name_node)
+                doc_occurrences.append(
+                    OccurrenceEdge(
+                        document_id=document_id,
+                        symbol_id=package_symbol_id,
+                        range_start_line=sl,
+                        range_start_col=sc,
+                        range_end_line=el,
+                        range_end_col=ec,
+                        role="definition",
+                        syntax_kind="package_declaration",
+                    )
+                )
+
+            for import_node in _node_children_by_type(tree.root_node, "import_declaration"):
+                import_text = _node_text(import_node, source_bytes).strip()
+                import_target = re.sub(r"^\s*import\s+(?:static\s+)?", "", import_text).rstrip(";").strip()
+                if not import_target:
+                    continue
+                symbol_id = f"ts:{relative_path}#{import_target}:import"
+                kind = "Import"
+                doc_symbols.append(
+                    SymbolNode(
+                        symbol_id=symbol_id,
+                        display_name=import_target,
+                        kind=kind,
+                        package=package_name,
+                        signature_hash=_sha1(symbol_id),
+                        symbol_fingerprint=_fingerprint(symbol_id, import_target, kind),
+                        enclosing_symbol=f"pkg:{package_name}" if package_name else "",
+                        language="java",
+                    )
+                )
+                sl, sc, el, ec = _range_from_node(import_node)
+                doc_occurrences.append(
+                    OccurrenceEdge(
+                        document_id=document_id,
+                        symbol_id=symbol_id,
+                        range_start_line=sl,
+                        range_start_col=sc,
+                        range_end_line=el,
+                        range_end_col=ec,
+                        role="definition",
+                        syntax_kind="import_declaration",
+                    )
+                )
 
             def visit(node: object, enclosing: Sequence[_TypeSymbol]) -> None:
                 node_type = str(getattr(node, "type", ""))
@@ -231,22 +395,22 @@ class SyntaxFallbackIndexer:
                         package=package_name,
                         signature_hash=_sha1(symbol_id),
                         symbol_fingerprint=_fingerprint(symbol_id, display_name, kind_token[0]),
-                        enclosing_symbol=owner.symbol_id if owner is not None else "",
+                        enclosing_symbol=owner.symbol_id if owner is not None else (f"pkg:{package_name}" if package_name else ""),
                         language="java",
                     )
-                    doc_symbols.append(symbol)
-                    doc_types.append(
-                        _TypeSymbol(
-                            symbol_id=symbol_id,
-                            qualified_name=qualified_name,
-                            simple_name=display_name,
-                            package=package_name,
-                        )
+                    type_symbol = _TypeSymbol(
+                        symbol_id=symbol_id,
+                        qualified_name=qualified_name,
+                        simple_name=display_name,
+                        package=package_name,
                     )
+                    doc_symbols.append(symbol)
+                    doc_types.append(type_symbol)
                     sl, sc, el, ec = _range_from_node(name_node)
+                    esl, esc, eel, eec = _range_from_node(node)
                     doc_occurrences.append(
                         OccurrenceEdge(
-                            document_id=f"{repo}:{commit}:{relative_path}",
+                            document_id=document_id,
                             symbol_id=symbol_id,
                             range_start_line=sl,
                             range_start_col=sc,
@@ -254,6 +418,10 @@ class SyntaxFallbackIndexer:
                             range_end_col=ec,
                             role="definition",
                             syntax_kind=node_type,
+                            enclosing_range_start_line=esl,
+                            enclosing_range_start_col=esc,
+                            enclosing_range_end_line=eel,
+                            enclosing_range_end_col=eec,
                         )
                     )
                     if owner is not None:
@@ -264,6 +432,8 @@ class SyntaxFallbackIndexer:
                                 target_name=owner.qualified_name,
                                 relative_path=relative_path,
                                 package=package_name,
+                                imports=imports,
+                                syntax_kind=node_type,
                             )
                         )
                     child_by_field_name = getattr(node, "child_by_field_name", None)
@@ -271,6 +441,7 @@ class SyntaxFallbackIndexer:
                     if super_node is None:
                         super_node = _child_by_type(node, "superclass")
                     if super_node is not None:
+                        rsl, rsc, rel, rec = _range_from_node(super_node)
                         for target in _split_type_refs(_node_text(super_node, source_bytes)):
                             doc_pending.append(
                                 _PendingRelation(
@@ -279,6 +450,12 @@ class SyntaxFallbackIndexer:
                                     target_name=target,
                                     relative_path=relative_path,
                                     package=package_name,
+                                    imports=imports,
+                                    range_start_line=rsl,
+                                    range_start_col=rsc,
+                                    range_end_line=rel,
+                                    range_end_col=rec,
+                                    syntax_kind="superclass",
                                 )
                             )
                     for node_name, relation_type in (
@@ -288,6 +465,7 @@ class SyntaxFallbackIndexer:
                         intf_node = _child_by_type(node, node_name)
                         if intf_node is None:
                             continue
+                        rsl, rsc, rel, rec = _range_from_node(intf_node)
                         for target in _split_type_refs(_node_text(intf_node, source_bytes)):
                             doc_pending.append(
                                 _PendingRelation(
@@ -296,13 +474,19 @@ class SyntaxFallbackIndexer:
                                     target_name=target,
                                     relative_path=relative_path,
                                     package=package_name,
+                                    imports=imports,
+                                    range_start_line=rsl,
+                                    range_start_col=rsc,
+                                    range_end_line=rel,
+                                    range_end_col=rec,
+                                    syntax_kind=node_name,
                                 )
                             )
                     body = child_by_field_name("body") if callable(child_by_field_name) else None
                     for child in _named_children(body or node):
                         if child is body:
                             continue
-                        visit(child, [*enclosing, doc_types[-1]])
+                        visit(child, [*enclosing, type_symbol])
                     return
 
                 if owner is None:
@@ -316,6 +500,16 @@ class SyntaxFallbackIndexer:
                     arity = _count_parameters(node)
                     symbol_id = f"ts:{relative_path}#{owner.qualified_name}.{display_name}:constructor:{arity}"
                     kind = "Constructor"
+                    doc_method = _MethodSymbol(
+                        symbol_id=symbol_id,
+                        owner_qualified_name=owner.qualified_name,
+                        simple_name=display_name,
+                        arity=arity,
+                        package=package_name,
+                        relative_path=relative_path,
+                        is_constructor=True,
+                    )
+                    known_methods.append(doc_method)
                     doc_symbols.append(
                         SymbolNode(
                             symbol_id=symbol_id,
@@ -329,9 +523,10 @@ class SyntaxFallbackIndexer:
                         )
                     )
                     sl, sc, el, ec = _range_from_node(name_node)
+                    esl, esc, eel, eec = _range_from_node(node)
                     doc_occurrences.append(
                         OccurrenceEdge(
-                            document_id=f"{repo}:{commit}:{relative_path}",
+                            document_id=document_id,
                             symbol_id=symbol_id,
                             range_start_line=sl,
                             range_start_col=sc,
@@ -339,6 +534,10 @@ class SyntaxFallbackIndexer:
                             range_end_col=ec,
                             role="definition",
                             syntax_kind=node_type,
+                            enclosing_range_start_line=esl,
+                            enclosing_range_start_col=esc,
+                            enclosing_range_end_line=eel,
+                            enclosing_range_end_col=eec,
                         )
                     )
                     doc_pending.append(
@@ -348,6 +547,8 @@ class SyntaxFallbackIndexer:
                             target_name=owner.qualified_name,
                             relative_path=relative_path,
                             package=package_name,
+                            imports=imports,
+                            syntax_kind=node_type,
                         )
                     )
                     return
@@ -362,6 +563,15 @@ class SyntaxFallbackIndexer:
                     arity = _count_parameters(node)
                     symbol_id = f"ts:{relative_path}#{owner.qualified_name}.{display_name}:method:{arity}"
                     kind = "Method"
+                    doc_method = _MethodSymbol(
+                        symbol_id=symbol_id,
+                        owner_qualified_name=owner.qualified_name,
+                        simple_name=display_name,
+                        arity=arity,
+                        package=package_name,
+                        relative_path=relative_path,
+                    )
+                    known_methods.append(doc_method)
                     doc_symbols.append(
                         SymbolNode(
                             symbol_id=symbol_id,
@@ -375,9 +585,10 @@ class SyntaxFallbackIndexer:
                         )
                     )
                     sl, sc, el, ec = _range_from_node(name_node)
+                    esl, esc, eel, eec = _range_from_node(node)
                     doc_occurrences.append(
                         OccurrenceEdge(
-                            document_id=f"{repo}:{commit}:{relative_path}",
+                            document_id=document_id,
                             symbol_id=symbol_id,
                             range_start_line=sl,
                             range_start_col=sc,
@@ -385,6 +596,10 @@ class SyntaxFallbackIndexer:
                             range_end_col=ec,
                             role="definition",
                             syntax_kind=node_type,
+                            enclosing_range_start_line=esl,
+                            enclosing_range_start_col=esc,
+                            enclosing_range_end_line=eel,
+                            enclosing_range_end_col=eec,
                         )
                     )
                     doc_pending.append(
@@ -394,11 +609,14 @@ class SyntaxFallbackIndexer:
                             target_name=owner.qualified_name,
                             relative_path=relative_path,
                             package=package_name,
+                            imports=imports,
+                            syntax_kind=node_type,
                         )
                     )
                     return
 
                 if node_type == "field_declaration":
+                    declared_type = _type_text_from_node(_first_type_child(node), source_bytes)
                     for decl in _node_children_by_type(node, "variable_declarator"):
                         name_node = _find_name_node(decl)
                         if name_node is None:
@@ -408,6 +626,16 @@ class SyntaxFallbackIndexer:
                             continue
                         symbol_id = f"ts:{relative_path}#{owner.qualified_name}.{display_name}:field"
                         kind = "Field"
+                        known_fields.append(
+                            _FieldSymbol(
+                                symbol_id=symbol_id,
+                                owner_qualified_name=owner.qualified_name,
+                                simple_name=display_name,
+                                package=package_name,
+                                relative_path=relative_path,
+                                declared_type=declared_type,
+                            )
+                        )
                         doc_symbols.append(
                             SymbolNode(
                                 symbol_id=symbol_id,
@@ -421,9 +649,10 @@ class SyntaxFallbackIndexer:
                             )
                         )
                         sl, sc, el, ec = _range_from_node(name_node)
+                        esl, esc, eel, eec = _range_from_node(node)
                         doc_occurrences.append(
                             OccurrenceEdge(
-                                document_id=f"{repo}:{commit}:{relative_path}",
+                                document_id=document_id,
                                 symbol_id=symbol_id,
                                 range_start_line=sl,
                                 range_start_col=sc,
@@ -431,6 +660,10 @@ class SyntaxFallbackIndexer:
                                 range_end_col=ec,
                                 role="definition",
                                 syntax_kind=node_type,
+                                enclosing_range_start_line=esl,
+                                enclosing_range_start_col=esc,
+                                enclosing_range_end_line=eel,
+                                enclosing_range_end_col=eec,
                             )
                         )
                         doc_pending.append(
@@ -440,6 +673,8 @@ class SyntaxFallbackIndexer:
                                 target_name=owner.qualified_name,
                                 relative_path=relative_path,
                                 package=package_name,
+                                imports=imports,
+                                syntax_kind=node_type,
                             )
                         )
                     return
@@ -449,7 +684,7 @@ class SyntaxFallbackIndexer:
 
             documents.append(
                 ScipDocument(
-                    document_id=f"{repo}:{commit}:{relative_path}",
+                    document_id=document_id,
                     relative_path=relative_path,
                     language="java",
                     occurrence_count=len(doc_occurrences),
@@ -461,42 +696,391 @@ class SyntaxFallbackIndexer:
             pending.extend(doc_pending)
             known_types.extend(doc_types)
 
-        by_qname = {item.qualified_name: item.symbol_id for item in known_types}
-        by_package_and_simple = {
-            (item.package, item.simple_name): item.symbol_id
-            for item in known_types
-        }
-        by_simple: dict[str, list[str]] = {}
+        by_qname = {item.qualified_name: item for item in known_types}
+        by_package_and_simple: dict[tuple[str, str], list[_TypeSymbol]] = {}
         for item in known_types:
-            by_simple.setdefault(item.simple_name, []).append(item.symbol_id)
+            by_package_and_simple.setdefault((item.package, item.simple_name), []).append(item)
+        by_simple: dict[str, list[_TypeSymbol]] = {}
+        for item in known_types:
+            by_simple.setdefault(item.simple_name, []).append(item)
 
-        def resolve_type(target_name: str, package_name: str) -> str | None:
+        methods_by_owner_name_arity: dict[tuple[str, str, int, bool], list[_MethodSymbol]] = {}
+        for item in known_methods:
+            methods_by_owner_name_arity.setdefault(
+                (item.owner_qualified_name, item.simple_name, item.arity, item.is_constructor),
+                [],
+            ).append(item)
+
+        fields_by_owner_name: dict[tuple[str, str], list[_FieldSymbol]] = {}
+        for item in known_fields:
+            fields_by_owner_name.setdefault((item.owner_qualified_name, item.simple_name), []).append(item)
+
+        def resolve_type_obj(
+            target_name: str,
+            package_name: str,
+            imports: _ImportContext | None = None,
+        ) -> _TypeSymbol | None:
             raw = (target_name or "").strip()
             if not raw:
                 return None
+            raw = _strip_generics(raw).replace("[]", "").strip()
             if raw in by_qname:
                 return by_qname[raw]
             short = raw.rsplit(".", 1)[-1]
-            if (package_name, short) in by_package_and_simple:
-                return by_package_and_simple[(package_name, short)]
+            if imports is not None:
+                imported = imports.direct.get(short)
+                if imported and imported in by_qname:
+                    return by_qname[imported]
+            package_hits = by_package_and_simple.get((package_name, short), [])
+            if len(package_hits) == 1:
+                return package_hits[0]
+            if imports is not None:
+                wildcard_hits = [
+                    by_qname[f"{pkg}.{short}"]
+                    for pkg in imports.wildcard_packages
+                    if f"{pkg}.{short}" in by_qname
+                ]
+                if len(wildcard_hits) == 1:
+                    return wildcard_hits[0]
             candidates = by_simple.get(short, [])
             if len(candidates) == 1:
                 return candidates[0]
             return None
 
-        for item in pending:
-            target_symbol = resolve_type(item.target_name, item.package)
-            if target_symbol is None:
-                continue
-            relations.append(
-                RelationEdge(
-                    from_symbol=item.from_symbol,
-                    to_symbol=target_symbol,
-                    relation_type=item.relation_type,
-                    confidence=1.0,
-                    evidence_document_id=f"{repo}:{commit}:{item.relative_path}",
+        def resolve_type(target_name: str, package_name: str, imports: _ImportContext | None = None) -> str | None:
+            typ = resolve_type_obj(target_name, package_name, imports)
+            return typ.symbol_id if typ is not None else None
+
+        seen_occurrences: set[tuple[str, str, int, int, str]] = {
+            (o.document_id, o.symbol_id, o.range_start_line, o.range_start_col, o.role)
+            for o in occurrences
+        }
+        seen_relations: set[tuple[str, str, str]] = set()
+
+        def add_reference(
+            *,
+            document_id: str,
+            target_symbol: str,
+            node: object,
+            syntax_kind: str,
+            enclosing_node: object | None = None,
+        ) -> None:
+            sl, sc, el, ec = _range_from_node(node)
+            key = (document_id, target_symbol, sl, sc, "reference")
+            if key in seen_occurrences:
+                return
+            seen_occurrences.add(key)
+            kwargs: dict[str, int] = {}
+            if enclosing_node is not None:
+                esl, esc, eel, eec = _range_from_node(enclosing_node)
+                kwargs = {
+                    "enclosing_range_start_line": esl,
+                    "enclosing_range_start_col": esc,
+                    "enclosing_range_end_line": eel,
+                    "enclosing_range_end_col": eec,
+                }
+            occurrences.append(
+                OccurrenceEdge(
+                    document_id=document_id,
+                    symbol_id=target_symbol,
+                    range_start_line=sl,
+                    range_start_col=sc,
+                    range_end_line=el,
+                    range_end_col=ec,
+                    role="reference",
+                    syntax_kind=syntax_kind,
+                    **kwargs,
                 )
             )
+
+        def add_relation(
+            *,
+            from_symbol: str,
+            to_symbol: str,
+            relation_type: str,
+            confidence: float,
+            evidence_document_id: str,
+        ) -> None:
+            key = (from_symbol, to_symbol, relation_type)
+            if key in seen_relations:
+                return
+            seen_relations.add(key)
+            relations.append(
+                RelationEdge(
+                    from_symbol=from_symbol,
+                    to_symbol=to_symbol,
+                    relation_type=relation_type,
+                    confidence=confidence,
+                    evidence_document_id=evidence_document_id,
+                )
+            )
+
+        for item in pending:
+            target_symbol = resolve_type(item.target_name, item.package, item.imports)
+            if target_symbol is None:
+                continue
+            document_id = f"{repo}:{commit}:{item.relative_path}"
+            add_relation(
+                from_symbol=item.from_symbol,
+                to_symbol=target_symbol,
+                relation_type=item.relation_type,
+                confidence=1.0,
+                evidence_document_id=document_id,
+            )
+            if item.range_start_line >= 0:
+                occurrences.append(
+                    OccurrenceEdge(
+                        document_id=document_id,
+                        symbol_id=target_symbol,
+                        range_start_line=item.range_start_line,
+                        range_start_col=item.range_start_col,
+                        range_end_line=item.range_end_line,
+                        range_end_col=item.range_end_col,
+                        role="reference",
+                        syntax_kind=item.syntax_kind,
+                    )
+                )
+
+        def resolve_method(
+            owner_qname: str,
+            name: str,
+            arity: int,
+            *,
+            constructor: bool = False,
+        ) -> _MethodSymbol | None:
+            candidates = methods_by_owner_name_arity.get((owner_qname, name, arity, constructor), [])
+            return candidates[0] if len(candidates) == 1 else None
+
+        def resolve_field(owner_qname: str, name: str) -> _FieldSymbol | None:
+            candidates = fields_by_owner_name.get((owner_qname, name), [])
+            return candidates[0] if len(candidates) == 1 else None
+
+        def field_type_qname(field: _FieldSymbol, imports: _ImportContext) -> str | None:
+            typ = resolve_type_obj(field.declared_type, field.package, imports)
+            return typ.qualified_name if typ is not None else None
+
+        def scan_references_for_document(path: Path, relative_path: str) -> None:
+            content = path.read_text(encoding="utf-8", errors="replace")
+            source_bytes = content.encode("utf-8")
+            tree = parser.parse(source_bytes)
+            package_name = ""
+            package_node = _child_by_type(tree.root_node, "package_declaration")
+            if package_node is not None:
+                package_name = _node_text(package_node, source_bytes)
+                package_name = package_name.replace("package", "").replace(";", "").strip()
+            imports = doc_imports.get(relative_path, _ImportContext(direct={}, wildcard_packages=()))
+            document_id = f"{repo}:{commit}:{relative_path}"
+
+            def collect_locals(method_node: object) -> tuple[dict[str, str], set[str]]:
+                local_types: dict[str, str] = {}
+                local_names: set[str] = set()
+                for candidate in _walk(method_node):
+                    ctype = str(getattr(candidate, "type", ""))
+                    if ctype in {"formal_parameter", "spread_parameter", "catch_formal_parameter"}:
+                        type_node = _child_by_field_name(candidate, "type")
+                        name_node = _find_name_node(candidate)
+                        name = _node_text(name_node, source_bytes).strip() if name_node is not None else ""
+                        if name:
+                            local_names.add(name)
+                        typ = resolve_type_obj(_type_text_from_node(type_node, source_bytes), package_name, imports)
+                        if name and typ is not None:
+                            local_types[name] = typ.qualified_name
+                    elif ctype == "local_variable_declaration":
+                        type_node = _child_by_field_name(candidate, "type")
+                        typ = resolve_type_obj(_type_text_from_node(type_node, source_bytes), package_name, imports)
+                        for decl in _node_children_by_type(candidate, "variable_declarator"):
+                            name_node = _find_name_node(decl)
+                            name = _node_text(name_node, source_bytes).strip() if name_node is not None else ""
+                            if not name:
+                                continue
+                            local_names.add(name)
+                            if typ is not None:
+                                local_types[name] = typ.qualified_name
+                return local_types, local_names
+
+            def add_field_ref(
+                current_method: _MethodSymbol,
+                field: _FieldSymbol,
+                node: object,
+                method_node: object,
+            ) -> None:
+                add_reference(
+                    document_id=document_id,
+                    target_symbol=field.symbol_id,
+                    node=node,
+                    syntax_kind="field_reference",
+                    enclosing_node=method_node,
+                )
+                add_relation(
+                    from_symbol=current_method.symbol_id,
+                    to_symbol=field.symbol_id,
+                    relation_type="field_refs",
+                    confidence=0.72,
+                    evidence_document_id=document_id,
+                )
+
+            def scan(
+                node: object,
+                enclosing: Sequence[_TypeSymbol],
+                current_method: _MethodSymbol | None,
+                current_method_node: object | None,
+                local_types: Mapping[str, str],
+                local_names: AbstractSet[str],
+            ) -> None:
+                node_type = str(getattr(node, "type", ""))
+                if node_type in {
+                    "class_declaration",
+                    "interface_declaration",
+                    "enum_declaration",
+                    "record_declaration",
+                    "annotation_type_declaration",
+                }:
+                    name_node = _find_name_node(node)
+                    if name_node is None:
+                        return
+                    display_name = _node_text(name_node, source_bytes).strip()
+                    qname_parts = [part for part in [package_name, *(x.simple_name for x in enclosing), display_name] if part]
+                    typ = by_qname.get(".".join(qname_parts))
+                    if typ is None:
+                        return
+                    body = _child_by_field_name(node, "body")
+                    for child in _named_children(body or node):
+                        if child is body:
+                            continue
+                        scan(child, [*enclosing, typ], None, None, {}, set())
+                    return
+
+                owner = enclosing[-1] if enclosing else None
+                if owner is not None and node_type in {"method_declaration", "constructor_declaration"}:
+                    name_node = _find_name_node(node)
+                    if name_node is None:
+                        return
+                    arity = _count_parameters(node)
+                    is_constructor = node_type == "constructor_declaration"
+                    name = owner.simple_name if is_constructor else _node_text(name_node, source_bytes).strip()
+                    method = resolve_method(owner.qualified_name, name, arity, constructor=is_constructor)
+                    if method is None:
+                        return
+                    locals_for_method, local_names_for_method = collect_locals(node)
+                    for child in _named_children(node):
+                        scan(child, enclosing, method, node, locals_for_method, local_names_for_method)
+                    return
+
+                if current_method is not None and owner is not None and current_method_node is not None:
+                    if node_type == "method_invocation":
+                        name_node = _child_by_field_name(node, "name") or _find_name_node(node)
+                        if name_node is not None:
+                            name = _node_text(name_node, source_bytes).strip()
+                            receiver_node = _child_by_field_name(node, "object")
+                            receiver = _node_text(receiver_node, source_bytes).strip() if receiver_node is not None else ""
+                            owner_qname = owner.qualified_name
+                            confidence = 0.66
+                            if receiver in {"", "this"}:
+                                owner_qname = owner.qualified_name
+                            elif receiver in local_types:
+                                owner_qname = str(local_types[receiver])
+                                confidence = 0.78
+                            elif receiver in local_names:
+                                owner_qname = ""
+                            else:
+                                receiver_short = receiver.split(".")[-1]
+                                field = resolve_field(owner.qualified_name, receiver_short)
+                                if field is not None and receiver_node is not None:
+                                    add_field_ref(current_method, field, receiver_node, current_method_node)
+                                    field_type = field_type_qname(field, imports)
+                                    if field_type is not None:
+                                        owner_qname = field_type
+                                        confidence = 0.74
+                                else:
+                                    typ = resolve_type_obj(receiver, package_name, imports)
+                                    if typ is not None:
+                                        owner_qname = typ.qualified_name
+                                        confidence = 0.78
+                            target = resolve_method(owner_qname, name, _argument_count(node)) if owner_qname else None
+                            if target is not None:
+                                add_reference(
+                                    document_id=document_id,
+                                    target_symbol=target.symbol_id,
+                                    node=name_node,
+                                    syntax_kind="method_invocation",
+                                    enclosing_node=current_method_node,
+                                )
+                                add_relation(
+                                    from_symbol=current_method.symbol_id,
+                                    to_symbol=target.symbol_id,
+                                    relation_type="calls",
+                                    confidence=confidence,
+                                    evidence_document_id=document_id,
+                                )
+                    elif node_type == "object_creation_expression":
+                        type_node = _first_type_child(node)
+                        typ = resolve_type_obj(_type_text_from_node(type_node, source_bytes), package_name, imports)
+                        if typ is not None and type_node is not None:
+                            target = resolve_method(
+                                typ.qualified_name,
+                                typ.simple_name,
+                                _argument_count(node),
+                                constructor=True,
+                            )
+                            if target is not None:
+                                add_reference(
+                                    document_id=document_id,
+                                    target_symbol=target.symbol_id,
+                                    node=type_node,
+                                    syntax_kind="constructor_invocation",
+                                    enclosing_node=current_method_node,
+                                )
+                                add_relation(
+                                    from_symbol=current_method.symbol_id,
+                                    to_symbol=target.symbol_id,
+                                    relation_type="calls",
+                                    confidence=0.78,
+                                    evidence_document_id=document_id,
+                                )
+                    elif node_type == "field_access":
+                        name_node = _child_by_field_name(node, "field") or _find_name_node(node)
+                        receiver_node = _child_by_field_name(node, "object")
+                        receiver = _node_text(receiver_node, source_bytes).strip() if receiver_node is not None else ""
+                        if name_node is not None and receiver in {"", "this"}:
+                            field = resolve_field(owner.qualified_name, _node_text(name_node, source_bytes).strip())
+                            if field is not None:
+                                add_field_ref(current_method, field, name_node, current_method_node)
+                    elif node_type == "identifier":
+                        name = _node_text(node, source_bytes).strip()
+                        parent = getattr(node, "parent", None)
+                        parent_type = str(getattr(parent, "type", ""))
+                        if (
+                            name
+                            and name not in local_names
+                            and not _is_child_field(parent, "name", node)
+                            and parent_type not in {"variable_declarator", "formal_parameter", "catch_formal_parameter"}
+                        ):
+                            field = resolve_field(owner.qualified_name, name)
+                            if field is not None:
+                                add_field_ref(current_method, field, node, current_method_node)
+
+                for child in _named_children(node):
+                    scan(child, enclosing, current_method, current_method_node, local_types, local_names)
+
+            for child in _named_children(tree.root_node):
+                scan(child, [], None, None, {}, set())
+
+        for path in _iter_java_files(repo_root):
+            relative_path = str(path.resolve().relative_to(root))
+            scan_references_for_document(path, relative_path)
+
+        symbols = list({item.symbol_id: item for item in symbols}.values())
+        occurrence_counts = Counter(item.document_id for item in occurrences)
+        documents = [
+            ScipDocument(
+                document_id=doc.document_id,
+                relative_path=doc.relative_path,
+                language=doc.language,
+                occurrence_count=int(occurrence_counts.get(doc.document_id, doc.occurrence_count)),
+                content=doc.content,
+            )
+            for doc in documents
+        ]
 
         self.store.clear_index_data()
         if documents:
