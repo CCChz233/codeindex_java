@@ -141,6 +141,14 @@ def test_run_retrieval_compare_eval_filters_commit_and_scores(tmp_path: Path) ->
             commit=COMMIT,
             embedding_version="v1",
             top_ks=[1, 2],
+            embedding_runtime={
+                "provider": "http",
+                "model": "test-model",
+                "dim": 128,
+                "api_base": "http://127.0.0.1/v1",
+                "endpoint": "/embeddings",
+                "api_key": "secret-must-not-appear",
+            },
         )
     finally:
         store.close()
@@ -155,6 +163,13 @@ def test_run_retrieval_compare_eval_filters_commit_and_scores(tmp_path: Path) ->
     assert report["cases"][0]["dense"]["failure_reason"] == ""
     assert report["cases"][0]["bm25"]["failure_reason"] == ""
     assert "Recall@1" in report["table_markdown"]
+    rt = report["summary"]["embedding_runtime"]
+    assert rt["provider"] == "http"
+    assert rt["model"] == "test-model"
+    assert rt["dim"] == 128
+    assert rt["api_base"] == "http://127.0.0.1/v1"
+    assert rt["endpoint"] == "/embeddings"
+    assert "api_key" not in rt
 
 
 def test_eval_retrieval_compare_cli_writes_output(

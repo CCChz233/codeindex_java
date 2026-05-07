@@ -34,7 +34,11 @@ from .index_accuracy_eval import run_index_accuracy_eval
 from .index_build_runner import run_java_full_index_pipeline
 from .index_contract import IndexContractError, UnsupportedCapabilityError
 from .retrieval_compare_eval import run_retrieval_compare_eval
-from .runtime_factory import make_embedding_pipeline_from_app_config, make_vector_stores
+from .runtime_factory import (
+    embedding_runtime_dict_from_app_config,
+    make_embedding_pipeline_from_app_config,
+    make_vector_stores,
+)
 from .storage import SqliteStore
 from .vector_store import SqliteVectorStore
 from .vector_store_lancedb import LanceDbVectorStore
@@ -694,6 +698,7 @@ def cmd_eval_retrieval_compare(args: argparse.Namespace) -> None:
             embedding_version=_resolve_embedding_version(args),
             top_ks=getattr(args, "top_k", None),
             include_commit_mismatches=bool(args.include_commit_mismatches),
+            embedding_runtime=embedding_runtime_dict_from_app_config(_cfg(args)),
         )
         if args.output:
             output = Path(args.output)

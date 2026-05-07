@@ -12,6 +12,7 @@ hybrid_platform/var/mcp_gateway/
 
 # Java 测评准备：targets/routes/build logs/worktrees 索引辅助文件
 hybrid_platform/var/java_eval/
+hybrid_platform/var/spring-eval/
 
 # scip-java 等生成的 SCIP（若在仓库或 worktree 内误提交）
 *.scip

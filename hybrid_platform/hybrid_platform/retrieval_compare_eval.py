@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, Sequence
@@ -494,6 +494,29 @@ def _index_info_json(store: SqliteStore) -> dict[str, Any]:
         return {"error": type(exc).__name__, "message": str(exc)}
 
 
+def sanitize_embedding_runtime_for_report(runtime: Mapping[str, Any]) -> dict[str, Any]:
+    """Subset of embedding runtime safe for JSON reports (omit secrets such as api_key)."""
+    keys = ("provider", "model", "dim", "api_base", "endpoint", "input_type", "device", "timeout_s")
+    out: dict[str, Any] = {}
+    for k in keys:
+        if k not in runtime:
+            continue
+        val = runtime[k]
+        if k == "dim":
+            try:
+                out[k] = int(val)
+            except (TypeError, ValueError):
+                out[k] = val
+        elif k == "timeout_s":
+            try:
+                out[k] = int(val)
+            except (TypeError, ValueError):
+                out[k] = val
+        else:
+            out[k] = val
+    return out
+
+
 def _normalize_top_ks(top_ks: Sequence[int] | None) -> list[int]:
     values = [int(k) for k in (top_ks or [5, 10]) if int(k) > 0]
     if not values:
@@ -511,6 +534,7 @@ def run_retrieval_compare_eval(
     embedding_version: str,
     top_ks: Sequence[int] | None = None,
     include_commit_mismatches: bool = False,
+    embedding_runtime: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     cases = load_retrieval_compare_cases(dataset_path)
     ks = _normalize_top_ks(top_ks)
@@ -581,6 +605,10 @@ def run_retrieval_compare_eval(
         "dense": _summarize_retriever(dense_results, relevant_counts, ks),
         "bm25": _summarize_retriever(bm25_results, relevant_counts, ks),
     }
+    if embedding_runtime is not None:
+        sanitized = sanitize_embedding_runtime_for_report(embedding_runtime)
+        if sanitized:
+            summary["embedding_runtime"] = sanitized
     return {
         "summary": summary,
         "table_markdown": _table_markdown(summary, ks),
