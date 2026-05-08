@@ -61,6 +61,9 @@ class AppConfig:
                 "sibling_merge_small_max_tokens": 100,
                 "sibling_merge_target_tokens": 260,
                 "sibling_merge_max_gap_lines": 3,
+                "symbol_cards_enabled": True,
+                "symbol_context_enabled": True,
+                "symbol_context_max_tokens": 220,
             },
             "embed": {},
             "embedding": {

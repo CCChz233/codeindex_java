@@ -60,6 +60,8 @@ def _coarse_node_type(kind: str) -> str:
     value = (kind or "").lower()
     if "package" in value or value == "module":
         return "package"
+    if "annotation" in value:
+        return "interface"
     if "interface" in value:
         return "interface"
     if "constructor" in value:
@@ -370,7 +372,7 @@ class CodeGraphBuilder:
             FROM relations r
             JOIN code_nodes src ON src.symbol_id = r.from_symbol
             JOIN code_nodes dst ON dst.symbol_id = r.to_symbol
-            WHERE r.relation_type IN ('calls', 'extends', 'implements', 'field_refs')
+            WHERE r.relation_type IN ('calls', 'extends', 'implements', 'field_refs', 'annotated_with', 'field_type')
             GROUP BY src.node_id, dst.node_id, r.relation_type
             """
         )

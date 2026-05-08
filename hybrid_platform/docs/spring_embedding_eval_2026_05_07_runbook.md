@@ -2,6 +2,10 @@
 
 本文记录 2026-05-07 对 Spring Framework 评测集进行多 embedding 模型对比的实际操作流程、产物路径与结果。通用说明见 [embedding_model_comparison.md](./embedding_model_comparison.md)；评测命令与数据集格式见 [retrieval_compare_eval.md](./retrieval_compare_eval.md)。
 
+> 日常操作优先看 [JAVA_INDEX_EVAL_RUNBOOK.md](./JAVA_INDEX_EVAL_RUNBOOK.md)。本文是 2026-05-07 的历史实验记录。
+
+> 2026-05-08 注意：当前代码已增强 `tree-sitter-java` 的 annotation/relation 提取，并默认开启 `chunk.symbol_context_enabled` 与 `chunk.symbol_cards_enabled`。这属于 ingest/chunk 逻辑变化，不能只在 2026-05-07 的 `spring-6ec2455e.db` 上重跑 `embed`；必须重新 `build-java-index` 生成新的共享 DB，再分别为 Qwen3/bge 等模型重跑 `embed` 和 `eval-retrieval-compare`。旧报告可作为 baseline 对比，但新旧 DB 的 chunk 数和 BM25 baseline 预计会变化。
+
 ## 目标
 
 固定同一份 Spring Framework 代码索引与同一批 chunks，只更换 embedding 模型，比较 dense retrieval 效果。
@@ -61,7 +65,7 @@ hybrid_platform/var/spring-eval/
   + eval-retrieval-compare
 ```
 
-只有更换 Spring commit、source backend、chunk 参数，或修复 ingest/chunk 逻辑时，才需要重新 `build-java-index`。
+只有更换 Spring commit、source backend、chunk 参数，或修复 ingest/chunk 逻辑时，才需要重新 `build-java-index`。2026-05-08 的 annotation、symbol context、symbol card 改动就属于这一类。
 
 ## 首次建库流程
 
@@ -78,6 +82,12 @@ myenv/bin/python -m hybrid_platform.cli \
   --commit 6ec2455e2491650fbeb7efaf78615a72700995ad \
   --db /data1/qadong/codeindex_java/hybrid_platform/var/spring-eval/index/spring-6ec2455e.db \
   --source-backend tree-sitter-java
+```
+
+如果是在 2026-05-08 之后验证新索引逻辑，建议使用新 DB 路径，避免覆盖旧 baseline：
+
+```text
+hybrid_platform/var/spring-eval/index/spring-6ec2455e-ts-symbolctx.db
 ```
 
 本次建库结果：
@@ -202,6 +212,7 @@ BM25 baseline  35.00%           0.264792      40.00%            0.271473
 - source backend 变化，例如从 `tree-sitter-java` 换成 `scip-java`。
 - chunk 策略或 chunk 参数变化。
 - 修复了 ingest、symbol、relation、chunk 相关逻辑。
+- 升级到 2026-05-08 之后的索引逻辑：新增 annotation refs、`annotated_with`/`field_type` relation、symbol context prelude、symbol card chunk。
 
 仅更换 embedding 模型时，不需要重建共享 DB。
 

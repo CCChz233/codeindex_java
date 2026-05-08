@@ -114,6 +114,21 @@
 - **为 `false`**：恢复旧行为，与 `field`/`property`/`constant` 及类型容器等一并参与 `_legacy_should_chunk_symbol_kind` 候选，并仍受 `java_container_policy` 约束。
 - **作用范围**：`chunk`（含 AST 主路径与 `definition_span` 回退路径的符号过滤）
 
+### `chunk.symbol_context_enabled`（默认：`true`）
+- **含义**：是否在符号 chunk 前注入稳定 metadata prelude，包括 `path`、`package`、`kind`、`symbol`、`owner`、`signature`、`annotations`、继承/实现关系、字段类型和 incoming calls。
+- **作用范围**：`chunk`
+- **建议**：做代码检索评测时保持开启；这会显著增加 embedding 可见的结构化上下文。
+
+### `chunk.symbol_context_max_tokens`（默认：`220`）
+- **含义**：metadata prelude 的最大 token 预算。
+- **作用范围**：`chunk`
+- **建议**：常用范围 `120~260`；过高会压缩源码正文预算，过低会丢 annotation / owner / relation 信息。
+
+### `chunk.symbol_cards_enabled`（默认：`true`）
+- **含义**：是否为每个核心符号额外生成一个短的 `symbol_card` chunk。card 不复制源码，只保存结构化摘要，`primary_symbol_ids` 指向原符号，便于自然语言 query 命中类、方法、字段、annotation 等元信息。
+- **作用范围**：`chunk`
+- **影响**：开启后 chunk 数量会增加，embedding 成本相应上升；关闭后仍保留普通源码 chunk。
+
 ---
 
 ## embed

@@ -210,12 +210,84 @@ def _first_type_child(node: object) -> object | None:
     return None
 
 
+_ANNOTATION_NODE_TYPES = {
+    "annotation",
+    "marker_annotation",
+    "single_element_annotation",
+}
+
+
+def _annotation_name_node(annotation_node: object) -> object | None:
+    named = _child_by_field_name(annotation_node, "name")
+    if named is not None:
+        return named
+    for child in _named_children(annotation_node):
+        ctype = str(getattr(child, "type", ""))
+        if ctype in {"identifier", "type_identifier", "scoped_identifier", "scoped_type_identifier"}:
+            return child
+    return None
+
+
+def _annotation_name_text(name: str) -> str:
+    raw = (name or "").strip()
+    if raw.startswith("@"):
+        raw = raw[1:]
+    raw = raw.split("(", 1)[0].strip()
+    return raw
+
+
+def _iter_declaration_annotation_name_nodes(node: object) -> Iterator[object]:
+    for child in _named_children(node):
+        ctype = str(getattr(child, "type", ""))
+        if ctype == "modifiers":
+            for modifier in _named_children(child):
+                if str(getattr(modifier, "type", "")) in _ANNOTATION_NODE_TYPES:
+                    name_node = _annotation_name_node(modifier)
+                    if name_node is not None:
+                        yield name_node
+        elif ctype in _ANNOTATION_NODE_TYPES:
+            name_node = _annotation_name_node(child)
+            if name_node is not None:
+                yield name_node
+
+
+def _iter_parameter_annotation_name_nodes(node: object) -> Iterator[object]:
+    params = _child_by_field_name(node, "parameters")
+    if params is None:
+        return
+    for child in _walk(params):
+        ctype = str(getattr(child, "type", ""))
+        if ctype in {"formal_parameter", "spread_parameter", "catch_formal_parameter", "receiver_parameter"}:
+            yield from _iter_declaration_annotation_name_nodes(child)
+
+
+def _best_effort_annotation_qname(
+    target_name: str,
+    package_name: str,
+    imports: "_ImportContext | None",
+) -> str:
+    raw = _annotation_name_text(target_name)
+    if not raw:
+        return ""
+    short = raw.rsplit(".", 1)[-1]
+    if imports is not None:
+        imported = imports.direct.get(short)
+        if imported:
+            return imported
+    if "." in raw:
+        return raw
+    if imports is not None and len(imports.wildcard_packages) == 1:
+        return f"{imports.wildcard_packages[0]}.{short}"
+    return f"{package_name}.{short}" if package_name else short
+
+
 @dataclass(frozen=True)
 class _TypeSymbol:
     symbol_id: str
     qualified_name: str
     simple_name: str
     package: str
+    kind: str
 
 
 @dataclass(frozen=True)
@@ -260,6 +332,24 @@ class _PendingRelation:
     syntax_kind: str = ""
 
 
+@dataclass(frozen=True)
+class _PendingAnnotation:
+    from_symbol: str
+    target_name: str
+    relative_path: str
+    package: str
+    imports: _ImportContext
+    range_start_line: int
+    range_start_col: int
+    range_end_line: int
+    range_end_col: int
+    enclosing_range_start_line: int
+    enclosing_range_start_col: int
+    enclosing_range_end_line: int
+    enclosing_range_end_col: int
+    syntax_kind: str
+
+
 class SyntaxFallbackIndexer:
     def __init__(self, store: SqliteStore) -> None:
         self.store = store
@@ -274,6 +364,7 @@ class SyntaxFallbackIndexer:
         occurrences: list[OccurrenceEdge] = []
         relations: list[RelationEdge] = []
         pending: list[_PendingRelation] = []
+        pending_annotations: list[_PendingAnnotation] = []
         known_types: list[_TypeSymbol] = []
         known_methods: list[_MethodSymbol] = []
         known_fields: list[_FieldSymbol] = []
@@ -296,6 +387,7 @@ class SyntaxFallbackIndexer:
             doc_symbols: list[SymbolNode] = []
             doc_occurrences: list[OccurrenceEdge] = []
             doc_pending: list[_PendingRelation] = []
+            doc_pending_annotations: list[_PendingAnnotation] = []
             doc_types: list[_TypeSymbol] = []
             document_id = f"{repo}:{commit}:{relative_path}"
 
@@ -362,6 +454,40 @@ class SyntaxFallbackIndexer:
                     )
                 )
 
+            def queue_annotation_name_node(from_symbol: str, name_node: object, enclosing_node: object, syntax_kind: str) -> None:
+                target_name = _annotation_name_text(_node_text(name_node, source_bytes))
+                if not target_name:
+                    return
+                sl, sc, el, ec = _range_from_node(name_node)
+                esl, esc, eel, eec = _range_from_node(enclosing_node)
+                doc_pending_annotations.append(
+                    _PendingAnnotation(
+                        from_symbol=from_symbol,
+                        target_name=target_name,
+                        relative_path=relative_path,
+                        package=package_name,
+                        imports=imports,
+                        range_start_line=sl,
+                        range_start_col=sc,
+                        range_end_line=el,
+                        range_end_col=ec,
+                        enclosing_range_start_line=esl,
+                        enclosing_range_start_col=esc,
+                        enclosing_range_end_line=eel,
+                        enclosing_range_end_col=eec,
+                        syntax_kind=syntax_kind,
+                    )
+                )
+
+            def queue_declaration_annotations(from_symbol: str, declaration_node: object, syntax_kind: str) -> None:
+                for name_node in _iter_declaration_annotation_name_nodes(declaration_node):
+                    queue_annotation_name_node(from_symbol, name_node, declaration_node, syntax_kind)
+
+            def queue_parameter_annotations(from_symbol: str, declaration_node: object, syntax_kind: str) -> None:
+                for name_node in _iter_parameter_annotation_name_nodes(declaration_node):
+                    parent = getattr(name_node, "parent", None) or declaration_node
+                    queue_annotation_name_node(from_symbol, name_node, parent, syntax_kind)
+
             def visit(node: object, enclosing: Sequence[_TypeSymbol]) -> None:
                 node_type = str(getattr(node, "type", ""))
                 owner = enclosing[-1] if enclosing else None
@@ -383,7 +509,7 @@ class SyntaxFallbackIndexer:
                         "interface_declaration": ("Interface", "interface"),
                         "enum_declaration": ("Enum", "enum"),
                         "record_declaration": ("Record", "record"),
-                        "annotation_type_declaration": ("Interface", "interface"),
+                        "annotation_type_declaration": ("Annotation", "annotation"),
                     }[node_type]
                     qname_parts = [part for part in [package_name, *(x.simple_name for x in enclosing), display_name] if part]
                     qualified_name = ".".join(qname_parts)
@@ -403,6 +529,7 @@ class SyntaxFallbackIndexer:
                         qualified_name=qualified_name,
                         simple_name=display_name,
                         package=package_name,
+                        kind=kind_token[0],
                     )
                     doc_symbols.append(symbol)
                     doc_types.append(type_symbol)
@@ -436,6 +563,7 @@ class SyntaxFallbackIndexer:
                                 syntax_kind=node_type,
                             )
                         )
+                    queue_declaration_annotations(symbol_id, node, "annotation")
                     child_by_field_name = getattr(node, "child_by_field_name", None)
                     super_node = child_by_field_name("superclass") if callable(child_by_field_name) else None
                     if super_node is None:
@@ -551,6 +679,8 @@ class SyntaxFallbackIndexer:
                             syntax_kind=node_type,
                         )
                     )
+                    queue_declaration_annotations(symbol_id, node, "annotation")
+                    queue_parameter_annotations(symbol_id, node, "parameter_annotation")
                     return
 
                 if node_type == "method_declaration":
@@ -613,10 +743,13 @@ class SyntaxFallbackIndexer:
                             syntax_kind=node_type,
                         )
                     )
+                    queue_declaration_annotations(symbol_id, node, "annotation")
+                    queue_parameter_annotations(symbol_id, node, "parameter_annotation")
                     return
 
                 if node_type == "field_declaration":
-                    declared_type = _type_text_from_node(_first_type_child(node), source_bytes)
+                    declared_type_node = _first_type_child(node)
+                    declared_type = _type_text_from_node(declared_type_node, source_bytes)
                     for decl in _node_children_by_type(node, "variable_declarator"):
                         name_node = _find_name_node(decl)
                         if name_node is None:
@@ -677,6 +810,25 @@ class SyntaxFallbackIndexer:
                                 syntax_kind=node_type,
                             )
                         )
+                        if declared_type_node is not None:
+                            rsl, rsc, rel, rec = _range_from_node(declared_type_node)
+                            for target in _split_type_refs(declared_type):
+                                doc_pending.append(
+                                    _PendingRelation(
+                                        from_symbol=symbol_id,
+                                        relation_type="field_type",
+                                        target_name=target,
+                                        relative_path=relative_path,
+                                        package=package_name,
+                                        imports=imports,
+                                        range_start_line=rsl,
+                                        range_start_col=rsc,
+                                        range_end_line=rel,
+                                        range_end_col=rec,
+                                        syntax_kind="field_type",
+                                    )
+                                )
+                        queue_declaration_annotations(symbol_id, node, "annotation")
                     return
 
             for child in _named_children(tree.root_node):
@@ -694,6 +846,7 @@ class SyntaxFallbackIndexer:
             symbols.extend(doc_symbols)
             occurrences.extend(doc_occurrences)
             pending.extend(doc_pending)
+            pending_annotations.extend(doc_pending_annotations)
             known_types.extend(doc_types)
 
         by_qname = {item.qualified_name: item for item in known_types}
@@ -757,6 +910,41 @@ class SyntaxFallbackIndexer:
         }
         seen_relations: set[tuple[str, str, str]] = set()
 
+        def add_reference_range(
+            *,
+            document_id: str,
+            target_symbol: str,
+            range_start_line: int,
+            range_start_col: int,
+            range_end_line: int,
+            range_end_col: int,
+            syntax_kind: str,
+            enclosing_range_start_line: int = -1,
+            enclosing_range_start_col: int = -1,
+            enclosing_range_end_line: int = -1,
+            enclosing_range_end_col: int = -1,
+        ) -> None:
+            key = (document_id, target_symbol, range_start_line, range_start_col, "reference")
+            if key in seen_occurrences:
+                return
+            seen_occurrences.add(key)
+            occurrences.append(
+                OccurrenceEdge(
+                    document_id=document_id,
+                    symbol_id=target_symbol,
+                    range_start_line=range_start_line,
+                    range_start_col=range_start_col,
+                    range_end_line=range_end_line,
+                    range_end_col=range_end_col,
+                    role="reference",
+                    syntax_kind=syntax_kind,
+                    enclosing_range_start_line=enclosing_range_start_line,
+                    enclosing_range_start_col=enclosing_range_start_col,
+                    enclosing_range_end_line=enclosing_range_end_line,
+                    enclosing_range_end_col=enclosing_range_end_col,
+                )
+            )
+
         def add_reference(
             *,
             document_id: str,
@@ -766,11 +954,12 @@ class SyntaxFallbackIndexer:
             enclosing_node: object | None = None,
         ) -> None:
             sl, sc, el, ec = _range_from_node(node)
-            key = (document_id, target_symbol, sl, sc, "reference")
-            if key in seen_occurrences:
-                return
-            seen_occurrences.add(key)
-            kwargs: dict[str, int] = {}
+            kwargs: dict[str, int] = {
+                "enclosing_range_start_line": -1,
+                "enclosing_range_start_col": -1,
+                "enclosing_range_end_line": -1,
+                "enclosing_range_end_col": -1,
+            }
             if enclosing_node is not None:
                 esl, esc, eel, eec = _range_from_node(enclosing_node)
                 kwargs = {
@@ -779,18 +968,15 @@ class SyntaxFallbackIndexer:
                     "enclosing_range_end_line": eel,
                     "enclosing_range_end_col": eec,
                 }
-            occurrences.append(
-                OccurrenceEdge(
-                    document_id=document_id,
-                    symbol_id=target_symbol,
-                    range_start_line=sl,
-                    range_start_col=sc,
-                    range_end_line=el,
-                    range_end_col=ec,
-                    role="reference",
-                    syntax_kind=syntax_kind,
-                    **kwargs,
-                )
+            add_reference_range(
+                document_id=document_id,
+                target_symbol=target_symbol,
+                range_start_line=sl,
+                range_start_col=sc,
+                range_end_line=el,
+                range_end_col=ec,
+                syntax_kind=syntax_kind,
+                **kwargs,
             )
 
         def add_relation(
@@ -840,6 +1026,58 @@ class SyntaxFallbackIndexer:
                         syntax_kind=item.syntax_kind,
                     )
                 )
+
+        synthetic_annotations: dict[str, SymbolNode] = {}
+
+        def resolve_annotation_symbol(item: _PendingAnnotation) -> tuple[str, float] | None:
+            typ = resolve_type_obj(item.target_name, item.package, item.imports)
+            if typ is not None and typ.kind == "Annotation":
+                return typ.symbol_id, 0.96
+            qname = _best_effort_annotation_qname(item.target_name, item.package, item.imports)
+            if not qname:
+                return None
+            short = qname.rsplit(".", 1)[-1]
+            package = qname.rsplit(".", 1)[0] if "." in qname else item.package
+            symbol_id = f"ann:{qname}"
+            if symbol_id not in synthetic_annotations:
+                synthetic_annotations[symbol_id] = SymbolNode(
+                    symbol_id=symbol_id,
+                    display_name=short,
+                    kind="Annotation",
+                    package=package,
+                    signature_hash=_sha1(symbol_id),
+                    symbol_fingerprint=_fingerprint(symbol_id, short, "Annotation"),
+                    language="java",
+                )
+            return symbol_id, 0.82
+
+        for item in pending_annotations:
+            resolved_annotation = resolve_annotation_symbol(item)
+            if resolved_annotation is None:
+                continue
+            target_symbol, confidence = resolved_annotation
+            document_id = f"{repo}:{commit}:{item.relative_path}"
+            add_reference_range(
+                document_id=document_id,
+                target_symbol=target_symbol,
+                range_start_line=item.range_start_line,
+                range_start_col=item.range_start_col,
+                range_end_line=item.range_end_line,
+                range_end_col=item.range_end_col,
+                syntax_kind=item.syntax_kind,
+                enclosing_range_start_line=item.enclosing_range_start_line,
+                enclosing_range_start_col=item.enclosing_range_start_col,
+                enclosing_range_end_line=item.enclosing_range_end_line,
+                enclosing_range_end_col=item.enclosing_range_end_col,
+            )
+            add_relation(
+                from_symbol=item.from_symbol,
+                to_symbol=target_symbol,
+                relation_type="annotated_with",
+                confidence=confidence,
+                evidence_document_id=document_id,
+            )
+        symbols.extend(synthetic_annotations.values())
 
         def resolve_method(
             owner_qname: str,

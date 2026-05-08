@@ -239,18 +239,38 @@ def test_tree_sitter_backend_indexes_project_calls_and_refs(tmp_path: Path) -> N
         """,
         encoding="utf-8",
     )
+    (src / "Autowired.java").write_text(
+        """
+        package demo;
+        public @interface Autowired {
+        }
+        """,
+        encoding="utf-8",
+    )
+    (src / "Bean.java").write_text(
+        """
+        package demo;
+        public @interface Bean {
+        }
+        """,
+        encoding="utf-8",
+    )
     app_src = repo_root / "src" / "main" / "java" / "demo" / "app"
     app_src.mkdir(parents=True)
     (app_src / "App.java").write_text(
         """
         package demo.app;
+        import demo.Autowired;
+        import demo.Bean;
         import demo.Runner;
         import demo.Service;
         public class App implements Runner {
+            @Autowired
             private Service service;
-            public App(Service service) {
+            public App(@Autowired Service service) {
                 this.service = service;
             }
+            @Bean
             public int run() {
                 return service.total();
             }
@@ -280,11 +300,15 @@ def test_tree_sitter_backend_indexes_project_calls_and_refs(tmp_path: Path) -> N
             if "App.run" in item.symbol_id
         ][0]
         service_field = find_entity(store, type="field", name="service", match="exact")[0]
+        autowired = find_entity(store, type="annotation", name="Autowired", match="exact")[0]
+        bean = find_entity(store, type="annotation", name="Bean", match="exact")[0]
         assert find_entity(store, type="package", name="demo.app", match="exact")
         assert find_entity(store, type="import", name="demo.Service", match="exact")
 
         refs = HybridRetrievalService(store).refs_of(total_method.symbol_id, top_k=5)
         assert any((r.payload or {}).get("path", "").endswith("App.java") for r in refs)
+        annotation_refs = HybridRetrievalService(store).refs_of(autowired.symbol_id, top_k=5)
+        assert any((r.payload or {}).get("path", "").endswith("App.java") for r in annotation_refs)
         callers = HybridRetrievalService(store).callers_of(total_method.symbol_id, top_k=5)
         assert any(r.result_id == app_method.symbol_id for r in callers)
 
@@ -297,6 +321,46 @@ def test_tree_sitter_backend_indexes_project_calls_and_refs(tmp_path: Path) -> N
             (app_method.symbol_id, service_field.symbol_id),
         ).fetchone()
         assert row is not None
+        annotated_field = store.conn.execute(
+            """
+            SELECT 1 FROM relations
+            WHERE from_symbol = ? AND to_symbol = ? AND relation_type = 'annotated_with'
+            LIMIT 1
+            """,
+            (service_field.symbol_id, autowired.symbol_id),
+        ).fetchone()
+        assert annotated_field is not None
+        annotated_method = store.conn.execute(
+            """
+            SELECT 1 FROM relations
+            WHERE from_symbol = ? AND to_symbol = ? AND relation_type = 'annotated_with'
+            LIMIT 1
+            """,
+            (app_method.symbol_id, bean.symbol_id),
+        ).fetchone()
+        assert annotated_method is not None
+        field_card = store.conn.execute(
+            """
+            SELECT content FROM chunks
+            WHERE primary_symbol_ids LIKE ? AND chunk_id LIKE '%:symbol_card:%'
+            LIMIT 1
+            """,
+            (f"%{service_field.symbol_id}%",),
+        ).fetchone()
+        assert field_card is not None
+        assert "annotations: @Autowired" in str(field_card["content"])
+        assert "field_type: Service" in str(field_card["content"])
+        method_chunk = store.conn.execute(
+            """
+            SELECT content FROM chunks
+            WHERE primary_symbol_ids LIKE ? AND chunk_id NOT LIKE '%:symbol_card:%'
+            LIMIT 1
+            """,
+            (f"%{app_method.symbol_id}%",),
+        ).fetchone()
+        assert method_chunk is not None
+        assert "path: src/main/java/demo/app/App.java" in str(method_chunk["content"])
+        assert "annotations: @Bean" in str(method_chunk["content"])
         assert service_cls.symbol_id
     finally:
         store.close()

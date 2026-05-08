@@ -13,6 +13,7 @@
 
 - `specs/`: 各阶段规格文档
 - `hybrid_platform/`: 运行时代码
+- `docs/JAVA_INDEX_EVAL_RUNBOOK.md`: Java 索引与 Spring 评测统一操作手册
 - `docs/ARCHITECTURE_MODULES.md`: 架构与模块维护说明
 - `examples/`: 示例数据与评测样本
 
@@ -210,7 +211,7 @@ python -m hybrid_platform.cli --config config/local_config.json query --db examp
 
 `build-java-index` 是正式全链路入口：`source backend -> ingest -> build-code-graph -> chunk -> embed`。`--source-backend` 可选：
 
-- `tree-sitter-java`：不编译，直接解析 `.java`，提取类型/方法/字段/继承/项目内 best-effort refs/calls/field_refs。
+- `tree-sitter-java`：不编译，直接解析 `.java`，提取 package/import/type/method/field/annotation、继承/实现、项目内 best-effort refs/calls/field_refs，以及 `annotated_with`。
 - `scip-java`：调用 `scip-java`，可自动识别 `Maven` / `Gradle`，支持 `--build-tool`、`--scip-java-cmd`、`--semanticdb-targetroot`。
 - `document`：不提符号，只做文档/chunk 层面的 keyword/semantic/hybrid 检索。
 
@@ -229,6 +230,9 @@ python -m hybrid_platform.cli --config config/local_config.json query --db examp
 - `extends`
 - `implements`
 - `field_refs`
+- `annotated_with`
+
+chunk 阶段会复用统一 symbols/occurrences/relations。默认开启 `symbol_context_enabled` 与 `symbol_cards_enabled`：普通符号 chunk 前会注入 path/package/kind/symbol/owner/signature/annotations 等结构化 prelude，同时为核心符号生成短的 `symbol_card` chunk，帮助 embedding 检索到源码里不明显但对定位很重要的结构信息。
 
 ## HTTP 服务
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -320,27 +321,132 @@ def _chunk_meta_row(
     }
 
 
-def _metrics_for_results(
-    result_ids: Sequence[str],
-    relevant_ids: set[str],
+def _dcg(relevances: Sequence[int]) -> float:
+    return sum((2**rel - 1) / math.log2(rank + 1) for rank, rel in enumerate(relevances, start=1))
+
+
+def _ratio(num: int, denom: int) -> float:
+    return float(num) / float(denom) if denom > 0 else 0.0
+
+
+def _target_recall(*values: tuple[bool, float]) -> float:
+    active = [value for enabled, value in values if enabled]
+    return sum(active) / len(active) if active else 0.0
+
+
+def _metrics_for_rows(
+    rows: Sequence[dict[str, Any]],
+    case: RetrievalCompareCase,
+    relevant: RelevantChunks,
     top_ks: Sequence[int],
 ) -> dict[str, float]:
     metrics: dict[str, float] = {}
-    relevant_count = len(relevant_ids)
+    relevant_count = len(relevant.chunk_ids)
+    gold_file_count = len(case.gold_files)
+    gold_symbol_count = len(case.gold_symbols)
+    direct_chunk_count = len(case.gold_chunks)
     for k in top_ks:
-        top_ids = list(result_ids[:k])
-        seen_hits: set[str] = set()
+        top_rows = list(rows[:k])
+        seen_relevant_chunks: set[str] = set()
+        seen_files: set[str] = set()
+        seen_symbols: set[str] = set()
+        seen_direct_chunks: set[str] = set()
+        gains: list[int] = []
         first_rank = 0
-        for rank, chunk_id in enumerate(top_ids, start=1):
-            if chunk_id not in relevant_ids:
-                continue
-            seen_hits.add(chunk_id)
-            if first_rank == 0:
+        relevant_rows = 0
+        for rank, row in enumerate(top_rows, start=1):
+            chunk_id = str(row.get("chunk_id") or "")
+            is_relevant = bool(row.get("is_relevant"))
+            gains.append(1 if is_relevant else 0)
+            if is_relevant:
+                relevant_rows += 1
+                if chunk_id:
+                    seen_relevant_chunks.add(chunk_id)
+            if is_relevant and first_rank == 0:
                 first_rank = rank
-        metrics[f"recall@{k}"] = 1.0 if seen_hits else 0.0
+            seen_files.update(str(x) for x in row.get("matched_expected_files", []) if str(x))
+            seen_symbols.update(str(x) for x in row.get("matched_expected_symbols", []) if str(x))
+            seen_direct_chunks.update(str(x) for x in row.get("matched_expected_chunks", []) if str(x))
+
+        ideal_hits = min(relevant_count, k)
+        idcg = _dcg([1] * ideal_hits)
+        hit = 1.0 if seen_relevant_chunks else 0.0
+        file_recall = _ratio(len(seen_files), gold_file_count)
+        symbol_recall = _ratio(len(seen_symbols), gold_symbol_count)
+        direct_chunk_recall = _ratio(len(seen_direct_chunks), direct_chunk_count)
+        metrics[f"hit@{k}"] = hit
+        # Backward-compatible alias. Historically this field meant Hit@K, not strict recall.
+        metrics[f"recall@{k}"] = hit
         metrics[f"mrr@{k}"] = (1.0 / first_rank) if first_rank else 0.0
+        metrics[f"precision@{k}"] = _ratio(relevant_rows, k)
         metrics[f"chunk_recall@{k}"] = (
-            len(seen_hits) / relevant_count if relevant_count > 0 else 0.0
+            _ratio(len(seen_relevant_chunks), relevant_count)
+        )
+        metrics[f"file_hit@{k}"] = 1.0 if seen_files else 0.0
+        metrics[f"file_recall@{k}"] = file_recall
+        metrics[f"symbol_hit@{k}"] = 1.0 if seen_symbols else 0.0
+        metrics[f"symbol_recall@{k}"] = symbol_recall
+        metrics[f"direct_chunk_recall@{k}"] = direct_chunk_recall
+        metrics[f"target_recall@{k}"] = _target_recall(
+            (gold_file_count > 0, file_recall),
+            (gold_symbol_count > 0, symbol_recall),
+            (direct_chunk_count > 0, direct_chunk_recall),
+        )
+        metrics[f"ndcg@{k}"] = (_dcg(gains[:k]) / idcg) if idcg > 0 else 0.0
+    return metrics
+
+
+def _oracle_union_metrics(
+    dense: _RetrieverCaseResult,
+    bm25: _RetrieverCaseResult,
+    case: RetrievalCompareCase,
+    relevant: RelevantChunks,
+    top_ks: Sequence[int],
+) -> dict[str, float]:
+    metrics: dict[str, float] = {}
+    relevant_count = len(relevant.chunk_ids)
+    gold_file_count = len(case.gold_files)
+    gold_symbol_count = len(case.gold_symbols)
+    direct_chunk_count = len(case.gold_chunks)
+    for k in top_ks:
+        top_rows = [*dense.retrieved[:k], *bm25.retrieved[:k]]
+        seen_relevant_chunks: set[str] = set()
+        seen_files: set[str] = set()
+        seen_symbols: set[str] = set()
+        seen_direct_chunks: set[str] = set()
+        for row in top_rows:
+            chunk_id = str(row.get("chunk_id") or "")
+            if bool(row.get("is_relevant")) and chunk_id:
+                seen_relevant_chunks.add(chunk_id)
+            seen_files.update(str(x) for x in row.get("matched_expected_files", []) if str(x))
+            seen_symbols.update(str(x) for x in row.get("matched_expected_symbols", []) if str(x))
+            seen_direct_chunks.update(str(x) for x in row.get("matched_expected_chunks", []) if str(x))
+        file_recall = _ratio(len(seen_files), gold_file_count)
+        symbol_recall = _ratio(len(seen_symbols), gold_symbol_count)
+        direct_chunk_recall = _ratio(len(seen_direct_chunks), direct_chunk_count)
+        hit = 1.0 if seen_relevant_chunks else 0.0
+        metrics[f"hit@{k}"] = hit
+        metrics[f"recall@{k}"] = hit
+        metrics[f"mrr@{k}"] = max(
+            dense.metrics.get(f"mrr@{k}", 0.0),
+            bm25.metrics.get(f"mrr@{k}", 0.0),
+        )
+        returned_ids = {str(r.get("chunk_id") or "") for r in top_rows if str(r.get("chunk_id") or "")}
+        metrics[f"precision@{k}"] = _ratio(len(seen_relevant_chunks), max(1, len(returned_ids)))
+        metrics[f"chunk_recall@{k}"] = _ratio(len(seen_relevant_chunks), relevant_count)
+        metrics[f"file_hit@{k}"] = 1.0 if seen_files else 0.0
+        metrics[f"file_recall@{k}"] = file_recall
+        metrics[f"symbol_hit@{k}"] = 1.0 if seen_symbols else 0.0
+        metrics[f"symbol_recall@{k}"] = symbol_recall
+        metrics[f"direct_chunk_recall@{k}"] = direct_chunk_recall
+        metrics[f"target_recall@{k}"] = _target_recall(
+            (gold_file_count > 0, file_recall),
+            (gold_symbol_count > 0, symbol_recall),
+            (direct_chunk_count > 0, direct_chunk_recall),
+        )
+        metrics[f"ndcg@{k}"] = max(
+            dense.metrics.get(f"ndcg@{k}", 0.0),
+            bm25.metrics.get(f"ndcg@{k}", 0.0),
         )
     return metrics
 
@@ -359,7 +465,7 @@ def _failure_reason(
         return "empty_relevant"
     if returned_count <= 0:
         return "no_results"
-    if metrics.get(f"recall@{max_k}", 0.0) <= 0:
+    if metrics.get(f"hit@{max_k}", metrics.get(f"recall@{max_k}", 0.0)) <= 0:
         return "no_relevant_hit"
     return ""
 
@@ -380,12 +486,11 @@ def _run_dense(
     except Exception as exc:
         hits = []
         error = {"type": type(exc).__name__, "message": str(exc)}
-    result_ids = [chunk_id for chunk_id, _ in hits]
-    metrics = _metrics_for_results(result_ids, set(relevant.chunk_ids), top_ks)
     retrieved = [
         _chunk_meta_row(store, chunk_id, score, rank, relevant, case)
         for rank, (chunk_id, score) in enumerate(hits, start=1)
     ]
+    metrics = _metrics_for_rows(retrieved, case, relevant, top_ks)
     return _RetrieverCaseResult(
         metrics=metrics,
         retrieved=retrieved,
@@ -414,12 +519,11 @@ def _run_bm25(
     except Exception as exc:
         results = []
         error = {"type": type(exc).__name__, "message": str(exc)}
-    result_ids = [result.result_id for result in results]
-    metrics = _metrics_for_results(result_ids, set(relevant.chunk_ids), top_ks)
     retrieved = [
         _chunk_meta_row(store, result.result_id, result.score, rank, relevant, case)
         for rank, result in enumerate(results, start=1)
     ]
+    metrics = _metrics_for_rows(retrieved, case, relevant, top_ks)
     return _RetrieverCaseResult(
         metrics=metrics,
         retrieved=retrieved,
@@ -431,6 +535,48 @@ def _run_bm25(
             max_k=max_k,
         ),
         error=error,
+    )
+
+
+def _run_rrf_fusion(
+    dense: _RetrieverCaseResult,
+    bm25: _RetrieverCaseResult,
+    case: RetrievalCompareCase,
+    relevant: RelevantChunks,
+    top_ks: Sequence[int],
+    *,
+    rrf_k: int = 60,
+) -> _RetrieverCaseResult:
+    max_k = max(top_ks)
+    by_chunk: dict[str, dict[str, Any]] = {}
+    scores: dict[str, float] = {}
+    for rows in (dense.retrieved, bm25.retrieved):
+        for row in rows:
+            chunk_id = str(row.get("chunk_id") or "")
+            rank = int(row.get("rank") or 0)
+            if not chunk_id or rank <= 0:
+                continue
+            scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (rrf_k + rank)
+            by_chunk.setdefault(chunk_id, dict(row))
+    ranked_ids = sorted(scores.keys(), key=lambda cid: (-scores[cid], cid))[:max_k]
+    retrieved: list[dict[str, Any]] = []
+    for rank, chunk_id in enumerate(ranked_ids, start=1):
+        row = dict(by_chunk[chunk_id])
+        row["rank"] = rank
+        row["score"] = scores[chunk_id]
+        row["fusion"] = "rrf"
+        retrieved.append(row)
+    metrics = _metrics_for_rows(retrieved, case, relevant, top_ks)
+    return _RetrieverCaseResult(
+        metrics=metrics,
+        retrieved=retrieved,
+        failure_reason=_failure_reason(
+            error=None,
+            relevant_count=len(relevant.chunk_ids),
+            returned_count=len(retrieved),
+            metrics=metrics,
+            max_k=max_k,
+        ),
     )
 
 
@@ -450,40 +596,145 @@ def _summarize_retriever(
         ),
         "case_error_count": sum(1 for result in case_results if result.error is not None),
     }
+    metric_names = (
+        "hit",
+        "recall",
+        "mrr",
+        "precision",
+        "ndcg",
+        "chunk_recall",
+        "file_hit",
+        "file_recall",
+        "symbol_hit",
+        "symbol_recall",
+        "direct_chunk_recall",
+        "target_recall",
+    )
     for k in top_ks:
-        if n == 0:
-            out[f"recall@{k}"] = 0.0
-            out[f"mrr@{k}"] = 0.0
-            out[f"chunk_recall@{k}"] = 0.0
-            continue
-        out[f"recall@{k}"] = round(
-            sum(result.metrics.get(f"recall@{k}", 0.0) for result in case_results) / n,
-            6,
-        )
-        out[f"mrr@{k}"] = round(
-            sum(result.metrics.get(f"mrr@{k}", 0.0) for result in case_results) / n,
-            6,
-        )
-        out[f"chunk_recall@{k}"] = round(
-            sum(result.metrics.get(f"chunk_recall@{k}", 0.0) for result in case_results) / n,
-            6,
-        )
+        for metric_name in metric_names:
+            key = f"{metric_name}@{k}"
+            out[key] = (
+                0.0
+                if n == 0
+                else round(sum(result.metrics.get(key, 0.0) for result in case_results) / n, 6)
+            )
     return out
 
 
+_GROUP_BY_FIELDS = ("source_type", "semantic_scope", "structure_status", "query_source")
+
+
+def _group_value(case: RetrievalCompareCase, field: str) -> str:
+    value = case.raw.get(field)
+    if value is None or value == "":
+        return "__missing__"
+    if isinstance(value, (list, tuple, set)):
+        labels = [str(item).strip() for item in value if str(item).strip()]
+        return "|".join(labels) if labels else "__missing__"
+    return str(value).strip() or "__missing__"
+
+
+def _summarize_grouped_results(
+    group_labels: Sequence[dict[str, str]],
+    relevant_counts: Sequence[int],
+    dense_results: Sequence[_RetrieverCaseResult],
+    bm25_results: Sequence[_RetrieverCaseResult],
+    rrf_results: Sequence[_RetrieverCaseResult],
+    oracle_union_results: Sequence[_RetrieverCaseResult],
+    top_ks: Sequence[int],
+) -> dict[str, Any]:
+    groups: dict[str, Any] = {}
+    retrievers = {
+        "dense": dense_results,
+        "bm25": bm25_results,
+        "rrf": rrf_results,
+        "oracle_union": oracle_union_results,
+    }
+    for field in _GROUP_BY_FIELDS:
+        values = sorted({labels.get(field, "__missing__") for labels in group_labels})
+        field_summary: dict[str, Any] = {}
+        for value in values:
+            indexes = [idx for idx, labels in enumerate(group_labels) if labels.get(field, "__missing__") == value]
+            if not indexes:
+                continue
+            block: dict[str, Any] = {"cases": len(indexes)}
+            group_counts = [relevant_counts[idx] for idx in indexes]
+            for name, results in retrievers.items():
+                block[name] = _summarize_retriever([results[idx] for idx in indexes], group_counts, top_ks)
+            field_summary[value] = block
+        groups[field] = field_summary
+    return groups
+
+
+def _rows_seen_targets(rows: Sequence[dict[str, Any]], k: int) -> tuple[set[str], set[str]]:
+    seen_files: set[str] = set()
+    seen_symbols: set[str] = set()
+    for row in rows[:k]:
+        seen_files.update(str(x) for x in row.get("matched_expected_files", []) if str(x))
+        seen_symbols.update(str(x) for x in row.get("matched_expected_symbols", []) if str(x))
+    return seen_files, seen_symbols
+
+
+def _hit_at(result: _RetrieverCaseResult, k: int) -> bool:
+    return result.metrics.get(f"hit@{k}", result.metrics.get(f"recall@{k}", 0.0)) > 0
+
+
+def _case_diagnostics(
+    case: RetrievalCompareCase,
+    dense: _RetrieverCaseResult,
+    bm25: _RetrieverCaseResult,
+    rrf: _RetrieverCaseResult,
+    oracle_union: _RetrieverCaseResult,
+    max_k: int,
+) -> dict[str, Any]:
+    dense_hit = _hit_at(dense, max_k)
+    bm25_hit = _hit_at(bm25, max_k)
+    rrf_hit = _hit_at(rrf, max_k)
+    oracle_hit = _hit_at(oracle_union, max_k)
+    seen_files, seen_symbols = _rows_seen_targets(oracle_union.retrieved, max_k)
+    return {
+        "dense_only_hit": bool(dense_hit and not bm25_hit),
+        "bm25_only_hit": bool(bm25_hit and not dense_hit),
+        "both_hit": bool(dense_hit and bm25_hit),
+        "rrf_hit": bool(rrf_hit),
+        "oracle_union_hit": bool(oracle_hit),
+        "missing_gold_files": [path for path in case.gold_files if path not in seen_files],
+        "missing_gold_symbols": [symbol for symbol in case.gold_symbols if symbol not in seen_symbols],
+    }
+
+
 def _table_markdown(summary: dict[str, Any], top_ks: Sequence[int]) -> str:
-    lines = [
-        "| Metric | Dense | BM25 |",
-        "|---|---:|---:|",
+    retrievers = [
+        ("dense", "Dense"),
+        ("bm25", "BM25"),
+        ("rrf", "RRF"),
+        ("oracle_union", "Oracle union"),
     ]
+    lines = [
+        "| Metric | Dense | BM25 | RRF | Oracle union |",
+        "|---|---:|---:|---:|---:|",
+    ]
+
+    def value(name: str, metric: str) -> float:
+        block = summary.get(name) if isinstance(summary.get(name), dict) else {}
+        return float(block.get(metric, 0.0))
+
     for k in top_ks:
-        dense_recall = float(summary["dense"].get(f"recall@{k}", 0.0))
-        bm25_recall = float(summary["bm25"].get(f"recall@{k}", 0.0))
-        lines.append(f"| Recall@{k} | {dense_recall * 100:.2f}% | {bm25_recall * 100:.2f}% |")
-        lines.append(
-            f"| MRR@{k} | {float(summary['dense'].get(f'mrr@{k}', 0.0)):.6g} | "
-            f"{float(summary['bm25'].get(f'mrr@{k}', 0.0)):.6g} |"
-        )
+        for label, metric, as_percent in (
+            (f"Recall@{k} / Hit@{k}", f"recall@{k}", True),
+            (f"MRR@{k}", f"mrr@{k}", False),
+            (f"Precision@{k}", f"precision@{k}", True),
+            (f"nDCG@{k}", f"ndcg@{k}", False),
+            (f"FileRecall@{k}", f"file_recall@{k}", True),
+            (f"SymbolRecall@{k}", f"symbol_recall@{k}", True),
+            (f"ChunkRecall@{k}", f"chunk_recall@{k}", True),
+            (f"TargetRecall@{k}", f"target_recall@{k}", True),
+        ):
+            cells = []
+            for name, _title in retrievers:
+                raw = value(name, metric)
+                cells.append(f"{raw * 100:.2f}%" if as_percent else f"{raw:.6g}")
+            lines.append(f"| {label} | " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
 
@@ -542,7 +793,10 @@ def run_retrieval_compare_eval(
     skipped_cases: list[dict[str, Any]] = []
     dense_results: list[_RetrieverCaseResult] = []
     bm25_results: list[_RetrieverCaseResult] = []
+    rrf_results: list[_RetrieverCaseResult] = []
+    oracle_union_results: list[_RetrieverCaseResult] = []
     relevant_counts: list[int] = []
+    group_labels: list[dict[str, str]] = []
 
     for case in cases:
         if (
@@ -565,9 +819,19 @@ def run_retrieval_compare_eval(
         relevant = _relevant_chunks_for_case(store, repo, commit, case)
         dense = _run_dense(store, embedding_pipeline, case, relevant, embedding_version, ks)
         bm25 = _run_bm25(store, case, relevant, ks)
+        rrf = _run_rrf_fusion(dense, bm25, case, relevant, ks)
+        oracle_union = _RetrieverCaseResult(
+            metrics=_oracle_union_metrics(dense, bm25, case, relevant, ks),
+            retrieved=[*dense.retrieved[: max(ks)], *bm25.retrieved[: max(ks)]],
+            failure_reason="",
+        )
         relevant_counts.append(len(relevant.chunk_ids))
         dense_results.append(dense)
         bm25_results.append(bm25)
+        rrf_results.append(rrf)
+        oracle_union_results.append(oracle_union)
+        group_labels.append({field: _group_value(case, field) for field in _GROUP_BY_FIELDS})
+        diagnostics = _case_diagnostics(case, dense, bm25, rrf, oracle_union, max(ks))
         report_cases.append(
             {
                 "id": case.case_id,
@@ -578,6 +842,13 @@ def run_retrieval_compare_eval(
                 "gold_symbols": list(case.gold_symbols),
                 "gold_chunks": list(case.gold_chunks),
                 "relevant_chunk_count": len(relevant.chunk_ids),
+                "relevant_gold_counts": {
+                    "files": len(case.gold_files),
+                    "symbols": len(case.gold_symbols),
+                    "direct_chunks": len(case.gold_chunks),
+                    "relevant_chunks": len(relevant.chunk_ids),
+                },
+                **diagnostics,
                 "dense": {
                     "metrics": dense.metrics,
                     "retrieved": dense.retrieved,
@@ -589,6 +860,14 @@ def run_retrieval_compare_eval(
                     "retrieved": bm25.retrieved,
                     "failure_reason": bm25.failure_reason,
                     **({"error": bm25.error} if bm25.error is not None else {}),
+                },
+                "rrf": {
+                    "metrics": rrf.metrics,
+                    "retrieved": rrf.retrieved,
+                    "failure_reason": rrf.failure_reason,
+                },
+                "oracle_union": {
+                    "metrics": oracle_union.metrics,
                 },
             }
         )
@@ -604,6 +883,26 @@ def run_retrieval_compare_eval(
         "embedding_version": embedding_version,
         "dense": _summarize_retriever(dense_results, relevant_counts, ks),
         "bm25": _summarize_retriever(bm25_results, relevant_counts, ks),
+        "rrf": _summarize_retriever(rrf_results, relevant_counts, ks),
+        "oracle_union": _summarize_retriever(oracle_union_results, relevant_counts, ks),
+        "groups": _summarize_grouped_results(
+            group_labels,
+            relevant_counts,
+            dense_results,
+            bm25_results,
+            rrf_results,
+            oracle_union_results,
+            ks,
+        ),
+        "metric_notes": {
+            "recall@k": "Backward-compatible alias for hit@k: at least one relevant chunk appears in top K.",
+            "chunk_recall@k": "Unique relevant chunks retrieved in top K divided by all relevant chunks resolved from gold files/symbols/chunks.",
+            "file_recall@k": "Gold file coverage in top K based on retrieved chunk paths.",
+            "symbol_recall@k": "Gold symbol coverage in top K based on chunk primary symbols and symbol-derived relevant chunks.",
+            "target_recall@k": "Average of non-empty file/symbol/direct-chunk recall families for the case.",
+            "oracle_union": "Upper bound from dense top K union BM25 top K; not a deployable ranker.",
+            "rrf": "Reciprocal-rank fusion of dense and BM25 result lists.",
+        },
     }
     if embedding_runtime is not None:
         sanitized = sanitize_embedding_runtime_for_report(embedding_runtime)

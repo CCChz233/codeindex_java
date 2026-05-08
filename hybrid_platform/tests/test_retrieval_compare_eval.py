@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from hybrid_platform.models import Chunk, ScipDocument
 from hybrid_platform.retrieval_compare_eval import (
     load_retrieval_compare_cases,
@@ -121,6 +123,10 @@ def test_run_retrieval_compare_eval_filters_commit_and_scores(tmp_path: Path) ->
                 "gold_files": "src/Buffer.java",
                 "gold_symbols": "com.acme.Buffer#expand/0",
                 "repo_sha": COMMIT,
+                "source_type": "reviewed",
+                "semantic_scope": "method",
+                "structure_status": "resolved",
+                "query_source": "human",
             },
             {
                 "sample_id": "skip",
@@ -155,14 +161,39 @@ def test_run_retrieval_compare_eval_filters_commit_and_scores(tmp_path: Path) ->
 
     assert report["summary"]["loaded_cases"] == 2
     assert report["summary"]["evaluated_cases"] == 1
+    assert set(report["summary"]) >= {"dense", "bm25", "rrf", "oracle_union", "metric_notes"}
+    assert report["summary"]["dense"]["hit@1"] == 0.0
     assert report["summary"]["skipped_commit_mismatch"] == 1
     assert report["summary"]["dense"]["recall@1"] == 0.0
+    assert report["summary"]["dense"]["hit@2"] == 1.0
     assert report["summary"]["dense"]["mrr@2"] == 0.5
+    assert report["summary"]["dense"]["precision@2"] == 0.5
+    assert report["summary"]["dense"]["file_recall@2"] == 1.0
+    assert report["summary"]["dense"]["symbol_recall@2"] == 1.0
+    assert report["summary"]["dense"]["chunk_recall@2"] == 1.0
+    assert report["summary"]["dense"]["target_recall@2"] == 1.0
+    assert report["summary"]["dense"]["ndcg@2"] == pytest.approx(0.63093, rel=1e-5)
     assert report["summary"]["bm25"]["recall@1"] == 1.0
+    assert report["summary"]["bm25"]["hit@1"] == 1.0
     assert report["summary"]["bm25"]["mrr@1"] == 1.0
+    assert report["summary"]["rrf"]["hit@2"] == 1.0
+    assert report["summary"]["oracle_union"]["hit@1"] == 1.0
+    assert report["summary"]["oracle_union"]["file_recall@1"] == 1.0
+    assert report["summary"]["groups"]["source_type"]["reviewed"]["cases"] == 1
+    assert report["summary"]["groups"]["semantic_scope"]["method"]["dense"]["hit@2"] == 1.0
     assert report["cases"][0]["dense"]["failure_reason"] == ""
     assert report["cases"][0]["bm25"]["failure_reason"] == ""
+    assert report["cases"][0]["both_hit"] is True
+    assert report["cases"][0]["dense_only_hit"] is False
+    assert report["cases"][0]["bm25_only_hit"] is False
+    assert report["cases"][0]["rrf_hit"] is True
+    assert report["cases"][0]["oracle_union_hit"] is True
+    assert report["cases"][0]["missing_gold_files"] == []
+    assert report["cases"][0]["missing_gold_symbols"] == []
+    assert set(report["cases"][0]) >= {"rrf", "oracle_union", "relevant_gold_counts"}
     assert "Recall@1" in report["table_markdown"]
+    assert "FileRecall@1" in report["table_markdown"]
+    assert "Oracle union" in report["table_markdown"]
     rt = report["summary"]["embedding_runtime"]
     assert rt["provider"] == "http"
     assert rt["model"] == "test-model"
@@ -226,3 +257,4 @@ def test_eval_retrieval_compare_cli_writes_output(
     assert report["summary"]["loaded_cases"] == 1
     assert report["summary"]["evaluated_cases"] == 1
     assert "Recall@5" in report["table_markdown"]
+    assert "FileRecall@5" in report["table_markdown"]

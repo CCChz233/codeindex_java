@@ -46,6 +46,7 @@ def _write_manifest(path: Path) -> None:
 def _create_index_db(path: Path, *, repo: str, commit: str, symbol_name: str) -> None:
     store = SqliteStore(str(path))
     try:
+        store.prepare_index(repo, commit, source_mode="scip", build_tool="test")
         doc_id = f"{repo}:{commit}:src/main/java/com/example/{symbol_name}.java"
         symbol_id = f"semanticdb maven . . com/example/{symbol_name}#"
         store.conn.execute(

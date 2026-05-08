@@ -82,6 +82,9 @@ def chunk_runtime_dict_from_app_config(cfg: AppConfig) -> Dict[str, object]:
         "sibling_merge_small_max_tokens": int(ch.get("sibling_merge_small_max_tokens", 100)),
         "sibling_merge_target_tokens": int(ch.get("sibling_merge_target_tokens", 260)),
         "sibling_merge_max_gap_lines": int(ch.get("sibling_merge_max_gap_lines", 3)),
+        "symbol_cards_enabled": bool(ch.get("symbol_cards_enabled", True)),
+        "symbol_context_enabled": bool(ch.get("symbol_context_enabled", True)),
+        "symbol_context_max_tokens": int(ch.get("symbol_context_max_tokens", 220)),
     }
 
 

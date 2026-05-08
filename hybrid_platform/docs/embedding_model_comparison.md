@@ -2,6 +2,10 @@
 
 本文说明如何做 **dense（向量）召回** 的多模型对比实验。**默认推荐**：**一份共享 SQLite DB（chunks 不变）+ 每个模型独立 `embed` + 独立 LanceDB + 独立报告**；仅在「从零开始」或「需要隔离 chunks」时再为每模型跑完整 `build-java-index`。
 
+> 日常操作优先看 [JAVA_INDEX_EVAL_RUNBOOK.md](./JAVA_INDEX_EVAL_RUNBOOK.md)。本文只展开多 embedding 模型对比细节。
+
+这里的“chunks 不变”是硬前提：如果 source backend、ingest 逻辑、relations、chunk 策略、symbol context 或 symbol card 逻辑发生变化，需要先重建共享 DB，再为每个模型重算向量。2026-05-08 的 tree-sitter annotation + symbol card 优化属于必须重建 DB 的变化。
+
 背景实现：`chunks` 与 embedder 解耦；向量按 `(chunk_id, embedding_version)` 存在 [`embeddings`](../hybrid_platform/storage.py)；[`cmd_embed`](../hybrid_platform/cli.py) 只补缺向量；LanceDB 表维度在首次创建时固定（[`vector_store_lancedb.py`](../hybrid_platform/vector_store_lancedb.py)）。
 
 Spring 评测集与格式见 [retrieval_compare_eval.md](./retrieval_compare_eval.md)；Spring 跑通示例见 [spring_framework_eval_embedding_runbook.md](./spring_framework_eval_embedding_runbook.md)。
@@ -47,7 +51,7 @@ PY
 ```text
 hybrid_platform/var/spring-eval/
   index/
-    spring-6ec2455e.db              # 共享 SQLite：ingest + chunk + FTS（BM25）
+    spring-6ec2455e-ts-symbolctx.db # 共享 SQLite：ingest + chunk + FTS（BM25）
   models/
     qwen3-emb-8b/
       config.json                   # 仅此模型的 embedding + vector 段
@@ -69,7 +73,7 @@ hybrid_platform/var/spring-eval/
 
 ## 3. 配置模板（每模型一份）
 
-从 [`config/default_config.json`](../config/default_config.json)（相对于 `hybrid_platform/` 目录）复制 Java/chunk 等与模型无关的段落，仅改 `embedding` 与 `vector`：
+从 [`config/default_config.json`](../config/default_config.json)（相对于 `hybrid_platform/` 目录）复制 Java/chunk 等与模型无关的段落，仅改 `embedding` 与 `vector`。如果已经固定了一份共享 DB，`java_index` 和 `chunk` 段必须与首次建库时一致：
 
 ```json
 {
@@ -99,6 +103,20 @@ hybrid_platform/var/spring-eval/
 
 其余 `java_index`、`chunk` 等应与**首次建库**所用配置一致（否则不应共享同一 `.db`）。
 
+当前默认 chunk 增强项：
+
+```json
+{
+  "chunk": {
+    "symbol_context_enabled": true,
+    "symbol_cards_enabled": true,
+    "symbol_context_max_tokens": 220
+  }
+}
+```
+
+这些值会改变 chunk 内容或 chunk 数量；调它们时应新建 DB，并让所有模型重新 `embed`。
+
 **硬性规则**：**写入向量**与 **`eval-retrieval-compare`** 使用**同一份**该模型 `config.json`（评测会对 query 做 embedding）。
 
 ---
@@ -107,9 +125,11 @@ hybrid_platform/var/spring-eval/
 
 ### 4.1 首次：完整建库一次
 
-任选「占位」embedding（或最终第一个模型）跑 `build-java-index`，得到共享 `spring-6ec2455e.db`。详见 [spring_framework_eval_embedding_runbook.md](./spring_framework_eval_embedding_runbook.md) 步骤 3。
+任选「占位」embedding（或最终第一个模型）跑 `build-java-index`，得到共享 DB，例如 `spring-6ec2455e-ts-symbolctx.db`。详见 [spring_framework_eval_embedding_runbook.md](./spring_framework_eval_embedding_runbook.md) 步骤 3。
 
 完成后：`chunks` 与 BM25 就绪；第一个模型若在此时已 embed，其向量已在对应 `embedding.version` + LanceDB URI 下。
+
+如果目的是对比 2026-05-08 新索引逻辑与旧结果，不要覆盖旧 DB。建议使用新 DB 名，例如 `spring-6ec2455e-ts-symbolctx.db`，旧的 `spring-6ec2455e.db` 保留为 baseline。
 
 ### 4.2 每新增一个模型（4 步）
 
@@ -119,7 +139,7 @@ PY=myenv/bin/python
 ROOT=/path/to/codeindex_java/hybrid_platform/var/spring-eval
 NAME=qwen3-emb-8b
 CFG=$ROOT/models/$NAME/config.json
-DB=$ROOT/index/spring-6ec2455e.db
+DB=$ROOT/index/spring-6ec2455e-ts-symbolctx.db
 
 mkdir -p "$ROOT/models/$NAME/lancedb"
 # 编辑 $CFG：embedding.*、vector.lancedb.uri 指向上述 lancedb/

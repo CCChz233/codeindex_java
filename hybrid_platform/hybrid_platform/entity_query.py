@@ -25,8 +25,9 @@ _ENTITY_TYPE_TO_KINDS: dict[str, Optional[Tuple[str, ...]]] = {
     "class": ("Class", "Record"),
     "interface": ("Interface",),
     "enum": ("Enum",),
+    "annotation": ("Annotation",),
     # 「类型」级：类 / 接口 / 枚举
-    "type": ("Class", "Interface", "Enum", "Record"),
+    "type": ("Class", "Interface", "Enum", "Record", "Annotation"),
     "method": ("Method", "StaticMethod", "AbstractMethod"),
     "field": ("Field", "StaticField"),
     "constructor": ("Constructor",),

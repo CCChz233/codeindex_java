@@ -666,6 +666,128 @@ class SqliteStore:
                 out[str(row["symbol_id"])] = str(row["enclosing_symbol"] or "")
         return out
 
+    def fetch_symbol_contexts(self, symbol_ids: Sequence[str]) -> Dict[str, Dict[str, object]]:
+        """Return compact symbol metadata used to enrich retrieval chunks."""
+        ids = list(dict.fromkeys(str(x) for x in symbol_ids if str(x or "").strip()))
+        if not ids:
+            return {}
+        contexts: Dict[str, Dict[str, object]] = {}
+        owner_ids: set[str] = set()
+        step = 400
+        for i in range(0, len(ids), step):
+            batch = ids[i : i + step]
+            q_marks = ",".join(["?"] * len(batch))
+            cur = self.conn.execute(
+                f"""
+                SELECT symbol_id, display_name, kind, package, enclosing_symbol, language
+                FROM symbols
+                WHERE symbol_id IN ({q_marks})
+                """,
+                tuple(batch),
+            )
+            for row in cur.fetchall():
+                sid = str(row["symbol_id"])
+                owner = str(row["enclosing_symbol"] or "")
+                if owner:
+                    owner_ids.add(owner)
+                contexts[sid] = {
+                    "symbol_id": sid,
+                    "display_name": str(row["display_name"] or ""),
+                    "kind": str(row["kind"] or ""),
+                    "package": str(row["package"] or ""),
+                    "owner_symbol_id": owner,
+                    "owner": owner,
+                    "language": str(row["language"] or ""),
+                    "path": "",
+                    "signature": str(row["display_name"] or ""),
+                    "annotations": [],
+                    "extends": [],
+                    "implements": [],
+                    "field_type": [],
+                }
+
+        owner_labels: Dict[str, str] = {}
+        if owner_ids:
+            owner_list = list(owner_ids)
+            for i in range(0, len(owner_list), step):
+                batch = owner_list[i : i + step]
+                q_marks = ",".join(["?"] * len(batch))
+                cur = self.conn.execute(
+                    f"SELECT symbol_id, display_name FROM symbols WHERE symbol_id IN ({q_marks})",
+                    tuple(batch),
+                )
+                for row in cur.fetchall():
+                    owner_labels[str(row["symbol_id"])] = str(row["display_name"] or row["symbol_id"])
+            for ctx in contexts.values():
+                owner_sid = str(ctx.get("owner_symbol_id") or "")
+                if owner_sid in owner_labels:
+                    ctx["owner"] = owner_labels[owner_sid]
+
+        for i in range(0, len(ids), step):
+            batch = ids[i : i + step]
+            q_marks = ",".join(["?"] * len(batch))
+            cur = self.conn.execute(
+                f"""
+                SELECT o.symbol_id, d.relative_path
+                FROM occurrences o
+                JOIN documents d ON d.document_id = o.document_id
+                WHERE o.symbol_id IN ({q_marks}) AND o.role = 'definition'
+                ORDER BY o.range_start_line ASC
+                """,
+                tuple(batch),
+            )
+            for row in cur.fetchall():
+                sid = str(row["symbol_id"])
+                if sid in contexts and not str(contexts[sid].get("path") or ""):
+                    contexts[sid]["path"] = str(row["relative_path"] or "")
+
+        if self._table_exists("code_nodes"):
+            for i in range(0, len(ids), step):
+                batch = ids[i : i + step]
+                q_marks = ",".join(["?"] * len(batch))
+                cur = self.conn.execute(
+                    f"SELECT symbol_id, signature FROM code_nodes WHERE symbol_id IN ({q_marks})",
+                    tuple(batch),
+                )
+                for row in cur.fetchall():
+                    sid = str(row["symbol_id"])
+                    signature = str(row["signature"] or "")
+                    if sid in contexts and signature:
+                        contexts[sid]["signature"] = signature
+
+        for i in range(0, len(ids), step):
+            batch = ids[i : i + step]
+            q_marks = ",".join(["?"] * len(batch))
+            cur = self.conn.execute(
+                f"""
+                SELECT r.from_symbol, r.relation_type, s.symbol_id, s.display_name, s.kind, s.package
+                FROM relations r
+                JOIN symbols s ON s.symbol_id = r.to_symbol
+                WHERE r.from_symbol IN ({q_marks})
+                  AND r.relation_type IN ('annotated_with', 'extends', 'implements', 'field_type')
+                ORDER BY r.relation_type, s.display_name, s.symbol_id
+                """,
+                tuple(batch),
+            )
+            for row in cur.fetchall():
+                src = str(row["from_symbol"])
+                if src not in contexts:
+                    continue
+                rel = str(row["relation_type"])
+                label = str(row["display_name"] or row["symbol_id"])
+                if rel == "annotated_with":
+                    label = "@" + label.lstrip("@")
+                    key = "annotations"
+                elif rel == "field_type":
+                    key = "field_type"
+                else:
+                    key = rel
+                values = list(contexts[src].get(key, []) or [])
+                if label not in values:
+                    values.append(label)
+                    contexts[src][key] = values
+        return contexts
+
     def fetch_symbol_ids_for_document(self, document_id: str) -> List[str]:
         cur = self.conn.execute(
             "SELECT DISTINCT symbol_id FROM occurrences WHERE document_id = ?",

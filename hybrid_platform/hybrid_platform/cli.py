@@ -1355,7 +1355,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--type",
         dest="entity_type",
         required=True,
-        help="逻辑类型: class, interface, enum, type(类/接口/枚举), method, field, constructor, variable, type_parameter, any",
+        help="逻辑类型: package, import, class, interface, enum, annotation, type, method, field, constructor, variable, type_parameter, any",
     )
     fe.add_argument("--name", required=True, help="标识名（匹配 display_name 或 symbol_id 路径）")
     fe.add_argument(

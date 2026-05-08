@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from threading import BoundedSemaphore, Lock
-from typing import Any, Callable, Dict, Iterator, List, Sequence
+from typing import Any, Callable, Dict, Iterator, List, Mapping, Sequence
 
 from .models import Chunk
 from .storage import SqliteStore
@@ -437,6 +437,8 @@ def _normalize_java_kind(kind: str) -> set[str]:
         return {"constructor_declaration"}
     if "method" in value or "function" in value:
         return {"method_declaration"}
+    if "annotation" in value:
+        return {"annotation_type_declaration"}
     if "interface" in value:
         return {"interface_declaration"}
     if "enum" in value:
@@ -458,6 +460,7 @@ def _legacy_should_chunk_symbol_kind(kind: str) -> bool:
             "function",
             "class",
             "interface",
+            "annotation",
             "enum",
             "record",
             "type",
@@ -484,6 +487,27 @@ def _should_chunk_symbol_kind(kind: str, *, function_level_only: bool) -> bool:
     if function_level_only:
         return _is_function_level_symbol_kind(kind)
     return _legacy_should_chunk_symbol_kind(kind)
+
+
+def _should_symbol_card_kind(kind: str) -> bool:
+    value = (kind or "").lower()
+    return any(
+        token in value
+        for token in (
+            "constructor",
+            "method",
+            "function",
+            "class",
+            "interface",
+            "annotation",
+            "enum",
+            "record",
+            "type",
+            "field",
+            "property",
+            "constant",
+        )
+    )
 
 
 def _merge_line_intervals(intervals: Sequence[tuple[int, int]]) -> List[tuple[int, int]]:
@@ -608,7 +632,7 @@ def _pack_sibling_function_candidates(
 
 def _is_container_symbol_kind(kind: str) -> bool:
     value = (kind or "").lower()
-    return any(token in value for token in ("class", "interface", "enum", "record", "type", "object"))
+    return any(token in value for token in ("class", "interface", "annotation", "enum", "record", "type", "object"))
 
 
 def _is_code_document(relative_path: str, language: str) -> bool:
@@ -749,31 +773,71 @@ def _truncate_text_to_token_budget(
     return (truncated + suffix).strip() if truncated else ""
 
 
+def _unique_context_values(values: Sequence[object]) -> List[str]:
+    out: List[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if isinstance(value, (list, tuple, set)):
+            raw_items = value
+        else:
+            raw_items = [value]
+        for item in raw_items:
+            text = str(item or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            out.append(text)
+    return out
+
+
+def _context_field_values(
+    contexts: Sequence[Mapping[str, object]],
+    key: str,
+) -> List[str]:
+    return _unique_context_values([ctx.get(key, "") for ctx in contexts])
+
+
 def _format_chunk_fields_block(
     signature: str,
     incoming: Sequence[str],
     max_tokens: int,
     count_fn: Callable[[str], int],
+    symbol_contexts: Sequence[Mapping[str, object]] = (),
 ) -> str:
     if max_tokens <= 0:
         return ""
     remaining = max_tokens
     lines: List[str] = []
-    if signature:
-        prefix = "signature: "
+
+    def append_field(name: str, values: Sequence[object]) -> None:
+        nonlocal remaining
+        if remaining <= 0:
+            return
+        cleaned = _unique_context_values(values)
+        if not cleaned:
+            return
+        prefix = f"{name}: "
         budget = remaining - count_fn(prefix)
-        value = _truncate_text_to_token_budget(signature, budget, count_fn)
+        value = _truncate_text_to_token_budget(", ".join(cleaned), budget, count_fn)
         if value:
             line = prefix + value
             lines.append(line)
             remaining -= count_fn(line)
-    if incoming and remaining > 0:
-        prefix = "incoming_calls: "
-        budget = remaining - count_fn(prefix)
-        value = _truncate_text_to_token_budget(", ".join(incoming), budget, count_fn)
-        if value:
-            line = prefix + value
-            lines.append(line)
+
+    append_field("path", _context_field_values(symbol_contexts, "path"))
+    append_field("package", _context_field_values(symbol_contexts, "package"))
+    append_field("kind", _context_field_values(symbol_contexts, "kind"))
+    append_field("symbol", _context_field_values(symbol_contexts, "symbol_id"))
+    append_field("owner", _context_field_values(symbol_contexts, "owner"))
+    signature_values = _context_field_values(symbol_contexts, "signature")
+    if signature:
+        signature_values = [signature, *signature_values]
+    append_field("signature", signature_values)
+    append_field("annotations", _context_field_values(symbol_contexts, "annotations"))
+    append_field("extends", _context_field_values(symbol_contexts, "extends"))
+    append_field("implements", _context_field_values(symbol_contexts, "implements"))
+    append_field("field_type", _context_field_values(symbol_contexts, "field_type"))
+    append_field("incoming_calls", list(incoming))
     if not lines:
         return ""
     return "\n".join(lines)
@@ -1398,6 +1462,9 @@ class EmbeddingPipeline:
         sibling_merge_small_max_tokens: int = 100,
         sibling_merge_target_tokens: int = 260,
         sibling_merge_max_gap_lines: int = 3,
+        symbol_cards_enabled: bool = True,
+        symbol_context_enabled: bool = True,
+        symbol_context_max_tokens: int = 220,
     ) -> int:
         started = time.time()
         rows = self.store.fetch_documents_for_chunking(repo, commit)
@@ -1434,8 +1501,10 @@ class EmbeddingPipeline:
             if not lines:
                 continue
             used_definition_chunks = False
+            definitions_for_cards: List[object] = []
             if strategy == "ast":
                 node_defs = self.store.fetch_definition_nodes_for_document(doc_id)
+                definitions_for_cards = node_defs
                 if node_defs:
                     _smerge_small = max(8, int(sibling_merge_small_max_tokens))
                     doc_chunks = self._build_chunks_from_scip_ast_nodes(
@@ -1464,12 +1533,15 @@ class EmbeddingPipeline:
                         sibling_merge_small_max_tokens=_smerge_small,
                         sibling_merge_target_tokens=max(_smerge_small, int(sibling_merge_target_tokens)),
                         sibling_merge_max_gap_lines=max(0, int(sibling_merge_max_gap_lines)),
+                        symbol_context_enabled=bool(symbol_context_enabled),
+                        symbol_context_max_tokens=max(0, int(symbol_context_max_tokens)),
                     )
                     if doc_chunks:
                         used_definition_chunks = True
                         chunks.extend(doc_chunks)
             if not used_definition_chunks and (strategy == "definition_span" or fallback_to_definition_span):
                 definitions = self.store.fetch_definition_occurrences_for_document(doc_id)
+                definitions_for_cards = definitions
                 if definitions:
                     used_definition_chunks = True
                     chunks.extend(
@@ -1488,8 +1560,24 @@ class EmbeddingPipeline:
                             call_context_max_each=call_context_max_each,
                             leading_doc_max_lookback_lines=leading_doc_max_lookback_lines,
                             function_level_only=function_level_only,
+                            symbol_context_enabled=bool(symbol_context_enabled),
+                            symbol_context_max_tokens=max(0, int(symbol_context_max_tokens)),
                         )
                     )
+            if symbol_cards_enabled and definitions_for_cards:
+                chunks.extend(
+                    self._build_symbol_card_chunks(
+                        doc_id=doc_id,
+                        repo=repo,
+                        commit=commit,
+                        embedding_version=embedding_version,
+                        definitions=definitions_for_cards,
+                        call_cache=call_cache,
+                        include_call_graph_context=include_call_graph_context,
+                        call_context_max_each=call_context_max_each,
+                        symbol_context_max_tokens=max(0, int(symbol_context_max_tokens)),
+                    )
+                )
             if used_definition_chunks:
                 continue
             symbols = self.store.fetch_symbol_ids_for_document(doc_id)
@@ -1524,6 +1612,74 @@ class EmbeddingPipeline:
         )
         return len(chunks)
 
+    def _build_symbol_card_chunks(
+        self,
+        doc_id: str,
+        repo: str,
+        commit: str,
+        embedding_version: str,
+        definitions: List[object],
+        call_cache: Dict[str, tuple[List[str], List[str]]],
+        include_call_graph_context: bool,
+        call_context_max_each: int,
+        symbol_context_max_tokens: int,
+    ) -> List[Chunk]:
+        def row_value(row: object, key: str, default: object = "") -> object:
+            try:
+                return row[key]  # type: ignore[index]
+            except Exception:
+                return default
+
+        filtered = [
+            row
+            for row in definitions
+            if _should_symbol_card_kind(str(row_value(row, "kind", "")))
+        ]
+        if not filtered:
+            return []
+        symbol_ids = [str(row_value(row, "symbol_id", "")) for row in filtered]
+        contexts_by_id = self.store.fetch_symbol_contexts(symbol_ids)
+        seen: set[str] = set()
+        out: List[Chunk] = []
+        card_budget = max(64, int(symbol_context_max_tokens) if int(symbol_context_max_tokens or 0) > 0 else 220)
+        for row in filtered:
+            symbol_id = str(row_value(row, "symbol_id", ""))
+            if not symbol_id or symbol_id in seen:
+                continue
+            seen.add(symbol_id)
+            signature = str(row_value(row, "signature", "") or row_value(row, "display_name", "") or symbol_id)
+            incoming_calls: List[str] = []
+            if include_call_graph_context:
+                if symbol_id not in call_cache:
+                    call_cache[symbol_id] = _fetch_call_context_labels(
+                        self.store, repo, commit, symbol_id, call_context_max_each
+                    )
+                out_l, in_l = call_cache[symbol_id]
+                _ = out_l
+                incoming_calls = in_l
+            block = _format_chunk_fields_block(
+                signature,
+                incoming_calls,
+                card_budget,
+                self._chunk_token_count,
+                [contexts_by_id[symbol_id]] if symbol_id in contexts_by_id else (),
+            )
+            content = ("content_type: symbol_card\n" + block).strip() if block else f"content_type: symbol_card\nsymbol: {symbol_id}"
+            start_line = int(row_value(row, "node_start_line", row_value(row, "range_start_line", 0)) or 0)
+            end_line = int(row_value(row, "node_end_line", row_value(row, "range_end_line", start_line + 1)) or start_line + 1)
+            out.append(
+                Chunk(
+                    chunk_id=f"{doc_id}:symbol_card:{symbol_id}",
+                    document_id=doc_id,
+                    content=content,
+                    primary_symbol_ids=[symbol_id],
+                    span_start_line=max(0, start_line),
+                    span_end_line=max(max(0, start_line) + 1, end_line),
+                    embedding_version=embedding_version,
+                )
+            )
+        return out
+
     def _build_chunks_from_scip_ast_nodes(
         self,
         doc_id: str,
@@ -1551,6 +1707,8 @@ class EmbeddingPipeline:
         sibling_merge_small_max_tokens: int,
         sibling_merge_target_tokens: int,
         sibling_merge_max_gap_lines: int,
+        symbol_context_enabled: bool,
+        symbol_context_max_tokens: int,
     ) -> List[Chunk]:
         total_lines = len(lines)
         java_ast_nodes: List[Dict[str, object]] | None = None
@@ -1629,6 +1787,17 @@ class EmbeddingPipeline:
                 max_gap_lines=sibling_merge_max_gap_lines,
                 token_count=self._chunk_token_count,
             )
+        all_pack_symbol_ids = sorted(
+            {
+                str(s)
+                for item in pack_candidates
+                for s in item.get("symbol_ids", [item["symbol_id"]])  # type: ignore[union-attr]
+                if str(s)
+            }
+        )
+        symbol_contexts_by_id = (
+            self.store.fetch_symbol_contexts(all_pack_symbol_ids) if symbol_context_enabled else {}
+        )
         chunks: List[Chunk] = []
         for item in pack_candidates:
             primary_symbols = [str(s) for s in item.get("symbol_ids", [item["symbol_id"]])]  # type: ignore[union-attr]
@@ -1676,6 +1845,13 @@ class EmbeddingPipeline:
                     overlap_tokens=overlap_tokens,
                     signature=signature,
                     incoming_calls=incoming_calls,
+                    symbol_contexts=[
+                        symbol_contexts_by_id[sid]
+                        for sid in primary_symbols
+                        if sid in symbol_contexts_by_id
+                    ],
+                    symbol_context_enabled=symbol_context_enabled,
+                    symbol_context_max_tokens=symbol_context_max_tokens,
                 )
             )
         if function_level_only:
@@ -1711,6 +1887,11 @@ class EmbeddingPipeline:
                 )
             container_entries.sort(
                 key=lambda d: (int(d["node_end"]) - int(d["node_start"]), int(d["node_start"]))
+            )
+            container_contexts_by_id = (
+                self.store.fetch_symbol_contexts([str(d["symbol_id"]) for d in container_entries])
+                if symbol_context_enabled
+                else {}
             )
             for cent in container_entries:
                 cs = int(cent["node_start"])
@@ -1762,6 +1943,13 @@ class EmbeddingPipeline:
                             overlap_tokens=overlap_tokens,
                             signature=signature,
                             incoming_calls=incoming_calls,
+                            symbol_contexts=(
+                                [container_contexts_by_id[symbol_id]]
+                                if symbol_id in container_contexts_by_id
+                                else []
+                            ),
+                            symbol_context_enabled=symbol_context_enabled,
+                            symbol_context_max_tokens=symbol_context_max_tokens,
                         )
                     )
         return chunks
@@ -1782,6 +1970,8 @@ class EmbeddingPipeline:
         call_context_max_each: int,
         leading_doc_max_lookback_lines: int,
         function_level_only: bool,
+        symbol_context_enabled: bool,
+        symbol_context_max_tokens: int,
     ) -> List[Chunk]:
         chunks: List[Chunk] = []
         filtered_definitions = [
@@ -1789,6 +1979,11 @@ class EmbeddingPipeline:
             for occ in definitions
             if _should_chunk_symbol_kind(str(occ["kind"] or ""), function_level_only=function_level_only)
         ]
+        symbol_contexts_by_id = (
+            self.store.fetch_symbol_contexts([str(occ["symbol_id"]) for occ in filtered_definitions])
+            if symbol_context_enabled
+            else {}
+        )
         for def_idx, occ in enumerate(filtered_definitions):
             start_line = max(0, int(occ["range_start_line"]))
             if start_line >= len(lines):
@@ -1831,6 +2026,13 @@ class EmbeddingPipeline:
                     overlap_tokens=overlap_tokens,
                     signature=signature,
                     incoming_calls=incoming_calls,
+                    symbol_contexts=(
+                        [symbol_contexts_by_id[symbol_id]]
+                        if symbol_id in symbol_contexts_by_id
+                        else []
+                    ),
+                    symbol_context_enabled=symbol_context_enabled,
+                    symbol_context_max_tokens=symbol_context_max_tokens,
                 )
             )
         return chunks
@@ -1866,10 +2068,15 @@ class EmbeddingPipeline:
         overlap_tokens: int,
         signature: str = "",
         incoming_calls: Sequence[str] = (),
+        symbol_contexts: Sequence[Mapping[str, object]] = (),
+        symbol_context_enabled: bool = True,
+        symbol_context_max_tokens: int = 220,
     ) -> List[Chunk]:
         target = max(64, target_tokens)
         source_target = max(1, int(target * 0.8))
         metadata_target = max(0, target - source_target)
+        if symbol_context_enabled:
+            metadata_target = min(metadata_target, max(0, int(symbol_context_max_tokens)))
         overlap = max(0, min(overlap_tokens, source_target // 2))
         total_lines = len(span_lines)
         out: List[Chunk] = []
@@ -1881,7 +2088,11 @@ class EmbeddingPipeline:
             source_content = "\n".join(span_lines[i:j]).strip()
             if source_content:
                 metadata_block = _format_chunk_fields_block(
-                    signature, incoming_calls, metadata_target, count_fn
+                    signature,
+                    incoming_calls,
+                    metadata_target,
+                    count_fn,
+                    symbol_contexts if symbol_context_enabled else (),
                 )
                 content = source_content if not metadata_block else metadata_block + "\n\n" + source_content
                 out.append(

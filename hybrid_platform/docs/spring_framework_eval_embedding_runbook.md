@@ -2,10 +2,14 @@
 
 本文是「使用新的 embedding 模型，对仓库根目录下 `JAVA test/spring_framework_eval_v1_reviewed.verify.jsonl` 建索引并测试」的操作说明。Dense 检索口径、评测集字段与输出字段的详细说明见 [retrieval_compare_eval.md](./retrieval_compare_eval.md)。
 
+> 日常操作优先看 [JAVA_INDEX_EVAL_RUNBOOK.md](./JAVA_INDEX_EVAL_RUNBOOK.md)。本文保留为 Spring 评测的细化说明。
+
 ## 适用场景
 
 - 你已有一份 Spring Framework 源码树，且 commit 与评测集中的 `repo_sha` 一致（见下文「主 commit」）。
 - 你要更换 `embedding.provider` / `model` / `dim` 等：若 **chunks 已固定**，只需对该模型再跑 **`embed` + `eval-retrieval-compare`**（见 [embedding_model_comparison.md](./embedding_model_comparison.md) 主推流程）；从零开始或需隔离 chunks 时再 **`build-java-index`**。
+
+> 如果代码刚升级过 ingest/chunk 逻辑，例如 2026-05-08 引入的 annotation refs、symbol context prelude、symbol card chunk，则现有 chunks 不再视为固定。需要先重新 `build-java-index`，再按多模型流程追加各模型向量。
 
 ## 环境
 
@@ -60,11 +64,28 @@ git rev-parse HEAD
 | `embedding.api_base` / `api_key` / `endpoint` | 远端或网关必填项按 provider 填写 |
 | `vector.lancedb.uri` | 若使用 LanceDB，建议为新模型指定**新的 URI 目录**，避免与旧向量表混淆；多模型对比推荐 `write_mode=lancedb_only`（见对比文档） |
 
+**固定索引/chunk 时应保持一致：**
+
+| 配置项 | 说明 |
+|--------|------|
+| `java_index.source_backend` | `tree-sitter-java` / `scip-java` / `document`；改变后必须重建 DB |
+| `chunk.symbol_context_enabled` | 默认 `true`；关闭或开启都会改变 chunk 内容，需要重建 DB |
+| `chunk.symbol_cards_enabled` | 默认 `true`；开启会新增 symbol card chunks，需要重建 DB 并重算所有模型向量 |
+| `chunk.symbol_context_max_tokens` | 默认 `220`；改变 metadata prelude 预算，需要重建 DB |
+
 配置优先级：`命令行参数 > 配置文件 > 内置默认值`。评测阶段使用的配置文件应与**写入该模型向量**时**保持一致**（至少 `embedding.*` 与 `vector.*` 一致）。
 
 ## 步骤 3：建索引（首次）
 
 **仅首次**或为全新快照时需要完整建库。`build-java-index` 会执行：`source backend → ingest → build-code-graph → chunk → embed`。完成后得到共享 `--db`；**此后若仅更换 embedding 模型**，不要在同一 chunks 上重复跑全流程（除非你刻意重建 chunks），应跳到步骤 4b（仅 `embed`）和多模型对比文档。
+
+本次索引精度优化之后，建议不要复用旧的 2026-05-07 DB。新建一个 DB，例如：
+
+```text
+hybrid_platform/var/spring-eval/index/spring-6ec2455e-ts-symbolctx.db
+```
+
+然后对每个模型使用独立 `embedding.version` 和 LanceDB 目录重新 `embed`。
 
 无编译索引示例（`tree-sitter-java`，与当前默认配置一致）：
 
@@ -124,6 +145,7 @@ print(r["table_markdown"])
 print("evaluated_cases:", r["summary"]["evaluated_cases"])
 print("skipped_commit_mismatch:", r["summary"].get("skipped_commit_mismatch"))
 print("embedding_runtime:", r["summary"].get("embedding_runtime"))
+print("groups:", r["summary"].get("groups", {}).keys())
 PY
 ```
 
@@ -134,7 +156,8 @@ PY
 1. **Commit 过滤**：默认只评测 `repo_sha == --commit` 的样本；其余进入 `skipped_cases`。临时包含不匹配样本可加 `--include-commit-mismatches`，但不宜作为跨 commit 的正式指标（见 [retrieval_compare_eval.md](./retrieval_compare_eval.md) 第 6.6 节）。
 2. **Dense 依赖在线 embedding**：报告里的 dense 分支需要对查询做 embedding；需保证网络与 API Key 可用，且配置与建库时一致。
 3. **`embedding.version` 与向量存储**：版本用于区分写入的向量版本；换模型后版本与 DB/LanceDB 应对齐，否则可能出现检索不到或维度错误。
-4. **混合检索 `eval`**：若你需要 hybrid 模式整条链路评测，数据集格式可能与本文 JSONL 不同；请以 `docs/` 下对应评测文档为准。
+4. **新诊断字段**：报告会额外包含 `dense_only_hit`、`bm25_only_hit`、`both_hit`、`rrf_hit`、`oracle_union_hit`、`missing_gold_files`、`missing_gold_symbols`，以及 `summary.groups` 分组指标。用它们判断是 dense 排序、BM25/fusion，还是索引内容缺失。
+5. **混合检索 `eval`**：若你需要 hybrid 模式整条链路评测，数据集格式可能与本文 JSONL 不同；请以 `docs/` 下对应评测文档为准。
 
 ## 相关文档
 

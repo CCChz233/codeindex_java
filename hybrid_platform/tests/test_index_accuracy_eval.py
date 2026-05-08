@@ -169,7 +169,7 @@ def test_eval_index_accuracy_cli_writes_output(
 
 
 def test_index_accuracy_reports_unsupported_capability(tmp_path: Path) -> None:
-    db = tmp_path / "syntax.db"
+    db = tmp_path / "document.db"
     dataset = _write_jsonl(
         tmp_path / "unsupported.jsonl",
         [
@@ -184,7 +184,7 @@ def test_index_accuracy_reports_unsupported_capability(tmp_path: Path) -> None:
     )
     store = SqliteStore(str(db))
     try:
-        store.prepare_index(REPO, COMMIT, source_mode="syntax")
+        store.prepare_index(REPO, COMMIT, source_mode="document")
         service = HybridRetrievalService(store)
         report = run_index_accuracy_eval(
             store=store,

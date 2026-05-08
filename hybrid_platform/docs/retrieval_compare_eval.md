@@ -13,12 +13,12 @@
 
 输出包含：
 
-- 最终表格指标：`Recall@5`、`MRR@5`、`Recall@10`、`MRR@10`
-- 每个 retriever 的 `chunk_recall@k`
-- 每条 case 的 dense/BM25 排名、命中文件、命中 symbol、失败原因
+- 最终表格指标：`Recall@K / Hit@K`、`MRR@K`、`Precision@K`、`nDCG@K`、`FileRecall@K`、`SymbolRecall@K`、`ChunkRecall@K`、`TargetRecall@K`
+- 每个 retriever 的详细指标：`dense`、`bm25`、`rrf`、`oracle_union`
+- 每条 case 的 dense/BM25/RRF 排名、命中文件、命中 symbol、失败原因
 - `index_info`，用于确认 `source_mode`、capabilities、repo、commit
 
-这里的 `Recall@k` 是现有表格口径：top-k 内命中任意相关 chunk 就记为 1，再对 query 求平均。
+这里的 `Recall@K` 是历史兼容字段，实际口径等同 `Hit@K`：top-k 内命中任意相关 chunk 就记为 1，再对 query 求平均。严格覆盖率请看 `FileRecall@K`、`SymbolRecall@K`、`ChunkRecall@K`、`TargetRecall@K`。
 
 ## 2. 典型命令
 
@@ -72,15 +72,31 @@ python -m hybrid_platform.cli --config /path/to/eval_config.json eval-retrieval-
     "evaluated_cases": 80,
     "skipped_cases": 120,
     "skipped_commit_mismatch": 120,
-    "dense": {"recall@5": 0.6875, "mrr@5": 0.5339},
-    "bm25": {"recall@5": 0.1875, "mrr@5": 0.07396}
+    "dense": {"hit@5": 0.6875, "recall@5": 0.6875, "mrr@5": 0.5339, "file_recall@5": 0.31},
+    "bm25": {"hit@5": 0.1875, "recall@5": 0.1875, "mrr@5": 0.07396},
+    "rrf": {"hit@5": 0.72, "mrr@5": 0.54},
+    "oracle_union": {"hit@5": 0.80, "file_recall@5": 0.43}
   },
-  "table_markdown": "| Metric | Dense | BM25 | ...",
+  "table_markdown": "| Metric | Dense | BM25 | RRF | Oracle union | ...",
   "cases": [],
   "skipped_cases": [],
   "index_info": {}
 }
 ```
+
+指标口径：
+
+- `hit@K` / `recall@K`：TopK 是否至少命中一个 relevant chunk；`recall@K` 保留旧字段名，便于兼容已有聚合脚本。
+- `mrr@K`：第一个 relevant chunk 的倒数排名。
+- `precision@K`：TopK 中 relevant chunk 的比例。
+- `ndcg@K`：按 relevant chunk 的二值相关性计算排序质量。
+- `chunk_recall@K`：命中的 unique relevant chunks / 当前 case 展开的全部 relevant chunks。
+- `file_recall@K`：TopK 覆盖的 gold files 比例。
+- `symbol_recall@K`：TopK 覆盖的 gold symbols 比例。
+- `direct_chunk_recall@K`：直接标注 gold chunks 的覆盖比例。
+- `target_recall@K`：对当前 case 非空的 file/symbol/direct-chunk recall 取平均，更适合衡量多目标覆盖。
+- `rrf`：dense 和 BM25 的 Reciprocal Rank Fusion，可作为可落地融合策略参考。
+- `oracle_union`：dense TopK 与 BM25 TopK 并集的理论上界，不是可直接上线的排序器；如果它显著高于 dense/BM25，说明融合和重排还有空间。
 
 每条 case 的失败原因可能是：
 
@@ -88,6 +104,14 @@ python -m hybrid_platform.cli --config /path/to/eval_config.json eval-retrieval-
 - `no_results`：该 retriever 没有返回结果
 - `no_relevant_hit`：有结果，但 top-k 内没有命中相关 chunk
 - `case_error`：检索过程中抛出异常，错误细节会写入 `error`
+
+每条 case 还会输出诊断字段：
+
+- `dense_only_hit`、`bm25_only_hit`、`both_hit`：判断 dense 与 BM25 的互补性。
+- `rrf_hit`、`oracle_union_hit`：判断当前 RRF 是否吃到互补收益，以及 dense/BM25 并集理论上限。
+- `missing_gold_files`、`missing_gold_symbols`：在 oracle union 下仍未覆盖的 gold 目标，用于区分索引缺失、相关 chunk 展开失败和排序问题。
+
+`summary.groups` 会按评测集字段 `source_type`、`semantic_scope`、`structure_status`、`query_source` 分组汇总四路 retriever 指标。若 `oracle_union` 明显高于 `dense`/`bm25`/`rrf`，优先调 fusion/rerank；若 `oracle_union` 也低，优先查 `empty_relevant`、`missing_gold_files`、`missing_gold_symbols` 与 chunk 内容表达。
 
 ## 5. 服务器运行建议
 

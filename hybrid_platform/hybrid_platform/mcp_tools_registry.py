@@ -77,7 +77,7 @@ def register_codeindex_tools(
             "Use when the user gives a class/interface/method name and you need symbol_id for symbol_graph. "
             "For vague natural language, use semantic_query instead. For Java interfaces use entity_type=interface, not class. "
             "Read-only SQLite; no side effects beyond the query. "
-            "Parameters: entity_type such as class, interface, method, type, any; match is exact | contains. "
+            "Parameters: entity_type such as class, interface, annotation, method, type, any; match is exact | contains. "
             "Returns a JSON string: ok=true includes entities[], supported_types; count may be 0 (not an error)."
         ),
         annotations=_READ_ONLY,
