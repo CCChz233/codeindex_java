@@ -5,7 +5,7 @@ from typing import Dict
 
 
 VALID_MODES = {"structure", "semantic", "hybrid"}
-VALID_BLEND = {"linear", "rrf"}
+VALID_BLEND = {"linear", "rrf", "dense_guarded"}
 VALID_STRUCTURED_OPS = {"search", "symbol_exact", "def_of", "refs_of", "callers_of", "callees_of"}
 
 

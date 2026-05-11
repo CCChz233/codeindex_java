@@ -1379,7 +1379,7 @@ def build_parser() -> argparse.ArgumentParser:
     query.add_argument("--query", required=True)
     query.add_argument("--mode", choices=["structure", "semantic", "hybrid"], default=None)
     query.add_argument("--top-k", type=int, default=None)
-    query.add_argument("--blend-strategy", choices=["linear", "rrf"], default=None)
+    query.add_argument("--blend-strategy", choices=["linear", "rrf", "dense_guarded"], default=None)
     query.add_argument("--include-code", action=argparse.BooleanOptionalAction, default=None)
     query.add_argument("--max-code-chars", type=int, default=None)
     query.set_defaults(func=cmd_query)

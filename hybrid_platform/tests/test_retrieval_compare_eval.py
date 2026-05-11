@@ -7,7 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from hybrid_platform.dsl import Query
 from hybrid_platform.models import Chunk, ScipDocument
+from hybrid_platform.retrieval import HybridRetrievalService
 from hybrid_platform.retrieval_compare_eval import (
     load_retrieval_compare_cases,
     run_retrieval_compare_eval,
@@ -161,7 +163,7 @@ def test_run_retrieval_compare_eval_filters_commit_and_scores(tmp_path: Path) ->
 
     assert report["summary"]["loaded_cases"] == 2
     assert report["summary"]["evaluated_cases"] == 1
-    assert set(report["summary"]) >= {"dense", "bm25", "rrf", "oracle_union", "metric_notes"}
+    assert set(report["summary"]) >= {"dense", "bm25", "rrf", "dense_guarded", "oracle_union", "metric_notes"}
     assert report["summary"]["dense"]["hit@1"] == 0.0
     assert report["summary"]["skipped_commit_mismatch"] == 1
     assert report["summary"]["dense"]["recall@1"] == 0.0
@@ -177,6 +179,7 @@ def test_run_retrieval_compare_eval_filters_commit_and_scores(tmp_path: Path) ->
     assert report["summary"]["bm25"]["hit@1"] == 1.0
     assert report["summary"]["bm25"]["mrr@1"] == 1.0
     assert report["summary"]["rrf"]["hit@2"] == 1.0
+    assert report["summary"]["dense_guarded"]["hit@2"] == 1.0
     assert report["summary"]["oracle_union"]["hit@1"] == 1.0
     assert report["summary"]["oracle_union"]["file_recall@1"] == 1.0
     assert report["summary"]["groups"]["source_type"]["reviewed"]["cases"] == 1
@@ -187,12 +190,14 @@ def test_run_retrieval_compare_eval_filters_commit_and_scores(tmp_path: Path) ->
     assert report["cases"][0]["dense_only_hit"] is False
     assert report["cases"][0]["bm25_only_hit"] is False
     assert report["cases"][0]["rrf_hit"] is True
+    assert report["cases"][0]["dense_guarded_hit"] is True
     assert report["cases"][0]["oracle_union_hit"] is True
     assert report["cases"][0]["missing_gold_files"] == []
     assert report["cases"][0]["missing_gold_symbols"] == []
-    assert set(report["cases"][0]) >= {"rrf", "oracle_union", "relevant_gold_counts"}
+    assert set(report["cases"][0]) >= {"rrf", "dense_guarded", "oracle_union", "relevant_gold_counts"}
     assert "Recall@1" in report["table_markdown"]
     assert "FileRecall@1" in report["table_markdown"]
+    assert "Dense guarded" in report["table_markdown"]
     assert "Oracle union" in report["table_markdown"]
     rt = report["summary"]["embedding_runtime"]
     assert rt["provider"] == "http"
@@ -201,6 +206,26 @@ def test_run_retrieval_compare_eval_filters_commit_and_scores(tmp_path: Path) ->
     assert rt["api_base"] == "http://127.0.0.1/v1"
     assert rt["endpoint"] == "/embeddings"
     assert "api_key" not in rt
+
+
+def test_hybrid_query_accepts_dense_guarded_blend_strategy(tmp_path: Path) -> None:
+    db = tmp_path / "compare.db"
+    _build_compare_db(db)
+
+    store = SqliteStore(str(db))
+    try:
+        service = HybridRetrievalService(
+            store,
+            embedding_pipeline=FakeDensePipeline(),  # type: ignore[arg-type]
+        )
+        hits = service.query(
+            Query(text="capacity expansion", mode="hybrid", top_k=10, blend_strategy="dense_guarded")
+        )
+    finally:
+        store.close()
+
+    assert [hit.result_id for hit in hits[:2]] == ["chunk-view", "chunk-buffer"]
+    assert hits[0].explain.get("semantic_rank") == 1.0
 
 
 def test_eval_retrieval_compare_cli_writes_output(

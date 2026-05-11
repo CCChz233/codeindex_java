@@ -62,8 +62,11 @@ def aggregate(paths: list[Path], labels: dict[str, str]) -> dict[str, Any]:
             "evaluated_cases": summary.get("evaluated_cases"),
             "dense": _extract_metrics(summary, "dense"),
             "bm25": _extract_metrics(summary, "bm25"),
+            "dense_guarded": _extract_metrics(summary, "dense_guarded"),
+            "rrf": _extract_metrics(summary, "rrf"),
+            "oracle_union": _extract_metrics(summary, "oracle_union"),
         }
-        for m in (row["dense"], row["bm25"]):
+        for m in (row["dense"], row["bm25"], row["dense_guarded"], row["rrf"], row["oracle_union"]):
             all_keys.update(m.keys())
         rows.append(row)
 
@@ -87,43 +90,37 @@ def markdown_table(agg: dict[str, Any]) -> str:
         "| " + " | ".join(["---"] * len(header)) + " |",
     ]
 
-    def fmt_cell(k: str, dense: dict[str, float], bm25: dict[str, float]) -> str:
+    def fmt_cell(row: dict[str, Any], k: str) -> str:
+        branches = [
+            ("D", row["dense"]),
+            ("B", row["bm25"]),
+            ("G", row["dense_guarded"]),
+            ("R", row["rrf"]),
+            ("O", row["oracle_union"]),
+        ]
         if k.startswith("recall@"):
-            dr = dense.get(k)
-            br = bm25.get(k)
-            if dr is None and br is None:
+            vals = [(label, metrics.get(k)) for label, metrics in branches]
+            vals = [(label, val) for label, val in vals if val is not None]
+            if not vals:
                 return ""
-            parts = []
-            if dr is not None:
-                parts.append(f"D:{dr * 100:.2f}%")
-            if br is not None:
-                parts.append(f"B:{br * 100:.2f}%")
-            return " ".join(parts)
-        # mrr@
-        dr = dense.get(k)
-        br = bm25.get(k)
-        if dr is None and br is None:
+            return " ".join(f"{label}:{float(val) * 100:.2f}%" for label, val in vals)
+        vals = [(label, metrics.get(k)) for label, metrics in branches]
+        vals = [(label, val) for label, val in vals if val is not None]
+        if not vals:
             return ""
-        parts = []
-        if dr is not None:
-            parts.append(f"D:{dr:.6g}")
-        if br is not None:
-            parts.append(f"B:{br:.6g}")
-        return " ".join(parts)
+        return " ".join(f"{label}:{float(val):.6g}" for label, val in vals)
 
     for row in rows:
-        dense = row["dense"]
-        bm25 = row["bm25"]
         cells = [
             str(row.get("label", "")),
             str(row.get("embedding_version", "")),
             str(row.get("evaluated_cases", "")),
         ]
-        cells.extend(fmt_cell(k, dense, bm25) for k in metric_keys)
+        cells.extend(fmt_cell(row, k) for k in metric_keys)
         lines.append("| " + " | ".join(cells) + " |")
 
     legend = (
-        "\n_D = dense, B = BM25; recall shown as %, MRR as raw._\n"
+        "\n_D = dense, B = BM25, G = dense_guarded, R = RRF, O = oracle_union; recall shown as %, MRR as raw._\n"
         "Per-model BM25 should match when same DB / dataset / commit and evaluated_cases match.\n"
     )
     return "\n".join(lines) + legend
@@ -131,7 +128,7 @@ def markdown_table(agg: dict[str, Any]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Aggregate eval-retrieval-compare JSON reports (summary.dense vs summary.bm25)."
+        description="Aggregate eval-retrieval-compare JSON reports."
     )
     parser.add_argument(
         "reports",

@@ -339,7 +339,8 @@
 
 ### `query.blend_strategy`（默认：`linear`）
 - **含义**：混合检索融合策略。
-- **可选值**：`linear | rrf`
+- **可选值**：`linear | rrf | dense_guarded`
+- **说明**：`dense_guarded` 是 dense-first 融合，默认保留 dense 排名，只允许少量高排名 keyword/structure 结果补到尾部，避免 RRF 在 BM25 较弱时拉低 dense。
 - **作用范围**：`query`
 
 ### `query.include_code`（默认：`false`）

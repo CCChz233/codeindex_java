@@ -227,6 +227,7 @@ nDCG@10
 dense
 bm25
 rrf
+dense_guarded
 oracle_union
 ```
 
@@ -234,7 +235,8 @@ oracle_union
 
 | 现象 | 下一步 |
 |------|--------|
-| `oracle_union` 明显高于 `dense` 和 `rrf` | 优先调 fusion/rerank |
+| `rrf` 低于 `dense` | 优先试 `query.blend_strategy=dense_guarded` |
+| `oracle_union` 明显高于 `dense` 和 `dense_guarded` | 继续调 guarded fusion 或 rerank |
 | `oracle_union` 也不高 | 优先查索引内容、chunk 表达、gold 映射 |
 | `dense` 高、BM25 低 | embedding 起主要作用，关键词表达可能不足 |
 | BM25 高、`dense` 低 | dense 排序或 query embedding 可能有问题 |

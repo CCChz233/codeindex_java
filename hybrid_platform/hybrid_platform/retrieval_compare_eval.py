@@ -580,6 +580,99 @@ def _run_rrf_fusion(
     )
 
 
+def _run_dense_guarded_fusion(
+    dense: _RetrieverCaseResult,
+    bm25: _RetrieverCaseResult,
+    case: RetrievalCompareCase,
+    relevant: RelevantChunks,
+    top_ks: Sequence[int],
+) -> _RetrieverCaseResult:
+    max_k = max(top_ks)
+    dense_rows = [dict(row) for row in dense.retrieved[: max_k * 2]]
+    bm25_rows = [dict(row) for row in bm25.retrieved[: max_k * 2]]
+    if not dense_rows:
+        metrics = _metrics_for_rows(bm25_rows[:max_k], case, relevant, top_ks)
+        return _RetrieverCaseResult(
+            metrics=metrics,
+            retrieved=bm25_rows[:max_k],
+            failure_reason=_failure_reason(
+                error=None,
+                relevant_count=len(relevant.chunk_ids),
+                returned_count=len(bm25_rows),
+                metrics=metrics,
+                max_k=max_k,
+            ),
+        )
+
+    dense_ids = {str(row.get("chunk_id") or "") for row in dense_rows if str(row.get("chunk_id") or "")}
+    bm25_rank = {
+        str(row.get("chunk_id") or ""): int(row.get("rank") or rank)
+        for rank, row in enumerate(bm25_rows, start=1)
+        if str(row.get("chunk_id") or "")
+    }
+    for rank, row in enumerate(dense_rows, start=1):
+        chunk_id = str(row.get("chunk_id") or "")
+        row["rank"] = rank
+        row["fusion"] = "dense_guarded"
+        row["dense_rank"] = rank
+        if chunk_id in bm25_rank:
+            row["bm25_rank"] = bm25_rank[chunk_id]
+
+    max_inserts = min(2, max(0, max_k // 10))
+    inserts: list[dict[str, Any]] = []
+    if max_inserts > 0:
+        dense_top_paths = {
+            str(row.get("path") or "")
+            for row in dense_rows[:max_k]
+            if str(row.get("path") or "")
+        }
+        rank_cap = max(1, min(3, max_k // 3))
+        for rank, row in enumerate(bm25_rows, start=1):
+            if rank > rank_cap:
+                break
+            chunk_id = str(row.get("chunk_id") or "")
+            if not chunk_id or chunk_id in dense_ids:
+                continue
+            path = str(row.get("path") or "")
+            if path and path in dense_top_paths:
+                continue
+            candidate = dict(row)
+            candidate["fusion"] = "dense_guarded"
+            candidate["guarded_insert"] = True
+            candidate["bm25_rank"] = rank
+            inserts.append(candidate)
+            if len(inserts) >= max_inserts:
+                break
+
+    keep_n = max(1, max_k - len(inserts))
+    fused = [*dense_rows[:keep_n], *inserts, *dense_rows[keep_n:]]
+    retrieved: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in fused:
+        chunk_id = str(row.get("chunk_id") or "")
+        if not chunk_id or chunk_id in seen:
+            continue
+        seen.add(chunk_id)
+        out_row = dict(row)
+        out_row["rank"] = len(retrieved) + 1
+        retrieved.append(out_row)
+        if len(retrieved) >= max_k:
+            break
+
+    metrics = _metrics_for_rows(retrieved, case, relevant, top_ks)
+    return _RetrieverCaseResult(
+        metrics=metrics,
+        retrieved=retrieved,
+        failure_reason=_failure_reason(
+            error=None,
+            relevant_count=len(relevant.chunk_ids),
+            returned_count=len(retrieved),
+            metrics=metrics,
+            max_k=max_k,
+        ),
+    )
+
+
 def _summarize_retriever(
     case_results: Sequence[_RetrieverCaseResult],
     relevant_counts: Sequence[int],
@@ -640,6 +733,7 @@ def _summarize_grouped_results(
     dense_results: Sequence[_RetrieverCaseResult],
     bm25_results: Sequence[_RetrieverCaseResult],
     rrf_results: Sequence[_RetrieverCaseResult],
+    dense_guarded_results: Sequence[_RetrieverCaseResult],
     oracle_union_results: Sequence[_RetrieverCaseResult],
     top_ks: Sequence[int],
 ) -> dict[str, Any]:
@@ -648,6 +742,7 @@ def _summarize_grouped_results(
         "dense": dense_results,
         "bm25": bm25_results,
         "rrf": rrf_results,
+        "dense_guarded": dense_guarded_results,
         "oracle_union": oracle_union_results,
     }
     for field in _GROUP_BY_FIELDS:
@@ -684,12 +779,14 @@ def _case_diagnostics(
     dense: _RetrieverCaseResult,
     bm25: _RetrieverCaseResult,
     rrf: _RetrieverCaseResult,
+    dense_guarded: _RetrieverCaseResult,
     oracle_union: _RetrieverCaseResult,
     max_k: int,
 ) -> dict[str, Any]:
     dense_hit = _hit_at(dense, max_k)
     bm25_hit = _hit_at(bm25, max_k)
     rrf_hit = _hit_at(rrf, max_k)
+    dense_guarded_hit = _hit_at(dense_guarded, max_k)
     oracle_hit = _hit_at(oracle_union, max_k)
     seen_files, seen_symbols = _rows_seen_targets(oracle_union.retrieved, max_k)
     return {
@@ -697,6 +794,7 @@ def _case_diagnostics(
         "bm25_only_hit": bool(bm25_hit and not dense_hit),
         "both_hit": bool(dense_hit and bm25_hit),
         "rrf_hit": bool(rrf_hit),
+        "dense_guarded_hit": bool(dense_guarded_hit),
         "oracle_union_hit": bool(oracle_hit),
         "missing_gold_files": [path for path in case.gold_files if path not in seen_files],
         "missing_gold_symbols": [symbol for symbol in case.gold_symbols if symbol not in seen_symbols],
@@ -708,11 +806,12 @@ def _table_markdown(summary: dict[str, Any], top_ks: Sequence[int]) -> str:
         ("dense", "Dense"),
         ("bm25", "BM25"),
         ("rrf", "RRF"),
+        ("dense_guarded", "Dense guarded"),
         ("oracle_union", "Oracle union"),
     ]
     lines = [
-        "| Metric | Dense | BM25 | RRF | Oracle union |",
-        "|---|---:|---:|---:|---:|",
+        "| Metric | Dense | BM25 | RRF | Dense guarded | Oracle union |",
+        "|---|---:|---:|---:|---:|---:|",
     ]
 
     def value(name: str, metric: str) -> float:
@@ -794,6 +893,7 @@ def run_retrieval_compare_eval(
     dense_results: list[_RetrieverCaseResult] = []
     bm25_results: list[_RetrieverCaseResult] = []
     rrf_results: list[_RetrieverCaseResult] = []
+    dense_guarded_results: list[_RetrieverCaseResult] = []
     oracle_union_results: list[_RetrieverCaseResult] = []
     relevant_counts: list[int] = []
     group_labels: list[dict[str, str]] = []
@@ -820,6 +920,7 @@ def run_retrieval_compare_eval(
         dense = _run_dense(store, embedding_pipeline, case, relevant, embedding_version, ks)
         bm25 = _run_bm25(store, case, relevant, ks)
         rrf = _run_rrf_fusion(dense, bm25, case, relevant, ks)
+        dense_guarded = _run_dense_guarded_fusion(dense, bm25, case, relevant, ks)
         oracle_union = _RetrieverCaseResult(
             metrics=_oracle_union_metrics(dense, bm25, case, relevant, ks),
             retrieved=[*dense.retrieved[: max(ks)], *bm25.retrieved[: max(ks)]],
@@ -829,9 +930,10 @@ def run_retrieval_compare_eval(
         dense_results.append(dense)
         bm25_results.append(bm25)
         rrf_results.append(rrf)
+        dense_guarded_results.append(dense_guarded)
         oracle_union_results.append(oracle_union)
         group_labels.append({field: _group_value(case, field) for field in _GROUP_BY_FIELDS})
-        diagnostics = _case_diagnostics(case, dense, bm25, rrf, oracle_union, max(ks))
+        diagnostics = _case_diagnostics(case, dense, bm25, rrf, dense_guarded, oracle_union, max(ks))
         report_cases.append(
             {
                 "id": case.case_id,
@@ -866,6 +968,11 @@ def run_retrieval_compare_eval(
                     "retrieved": rrf.retrieved,
                     "failure_reason": rrf.failure_reason,
                 },
+                "dense_guarded": {
+                    "metrics": dense_guarded.metrics,
+                    "retrieved": dense_guarded.retrieved,
+                    "failure_reason": dense_guarded.failure_reason,
+                },
                 "oracle_union": {
                     "metrics": oracle_union.metrics,
                 },
@@ -884,6 +991,7 @@ def run_retrieval_compare_eval(
         "dense": _summarize_retriever(dense_results, relevant_counts, ks),
         "bm25": _summarize_retriever(bm25_results, relevant_counts, ks),
         "rrf": _summarize_retriever(rrf_results, relevant_counts, ks),
+        "dense_guarded": _summarize_retriever(dense_guarded_results, relevant_counts, ks),
         "oracle_union": _summarize_retriever(oracle_union_results, relevant_counts, ks),
         "groups": _summarize_grouped_results(
             group_labels,
@@ -891,6 +999,7 @@ def run_retrieval_compare_eval(
             dense_results,
             bm25_results,
             rrf_results,
+            dense_guarded_results,
             oracle_union_results,
             ks,
         ),
@@ -902,6 +1011,7 @@ def run_retrieval_compare_eval(
             "target_recall@k": "Average of non-empty file/symbol/direct-chunk recall families for the case.",
             "oracle_union": "Upper bound from dense top K union BM25 top K; not a deployable ranker.",
             "rrf": "Reciprocal-rank fusion of dense and BM25 result lists.",
+            "dense_guarded": "Dense-first deployable fusion: keeps dense as the backbone and only allows conservative keyword inserts.",
         },
     }
     if embedding_runtime is not None:

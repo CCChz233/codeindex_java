@@ -126,6 +126,108 @@ class HybridRetrievalService:
         return ranked
 
     @staticmethod
+    def _copy_result(
+        item: QueryResult,
+        *,
+        score: float | None = None,
+        explain: Dict[str, float] | None = None,
+    ) -> QueryResult:
+        return QueryResult(
+            result_id=item.result_id,
+            result_type=item.result_type,
+            score=item.score if score is None else score,
+            explain=dict(item.explain if explain is None else explain),
+            payload=item.payload,
+        )
+
+    def _dense_guarded_fusion(
+        self,
+        structured: List[QueryResult],
+        keyword: List[QueryResult],
+        semantic: List[QueryResult],
+        top_k: int,
+    ) -> List[QueryResult]:
+        """Dense-first fusion with conservative keyword/structure inserts.
+
+        RRF can pull weak BM25 hits ahead of strong dense results when the keyword
+        channel is noisy. This strategy keeps dense as the backbone, adds explain
+        signals for overlaps, and only allows a tiny number of high-rank non-dense
+        results near the tail when they add a new file.
+        """
+        if not semantic:
+            return self._linear_fusion(structured, keyword, semantic)
+
+        keyword_rank = {item.result_id: rank for rank, item in enumerate(keyword, start=1)}
+        structured_rank = {item.result_id: rank for rank, item in enumerate(structured, start=1)}
+        semantic_ids = {item.result_id for item in semantic}
+        dense_backbone: List[QueryResult] = []
+        for rank, item in enumerate(semantic, start=1):
+            explain = dict(item.explain)
+            explain["semantic_rank"] = float(rank)
+            score = float(item.score)
+            if item.result_id in keyword_rank:
+                kr = keyword_rank[item.result_id]
+                explain["keyword_rank"] = float(kr)
+                # Small overlap boost only; the dense rank remains the backbone.
+                score += 0.01 / float(kr)
+            if item.result_id in structured_rank:
+                sr = structured_rank[item.result_id]
+                explain["structure_rank"] = float(sr)
+                score += 0.015 / float(sr)
+            dense_backbone.append(self._copy_result(item, score=score, explain=explain))
+
+        limit = max(1, int(top_k))
+        max_inserts = min(2, max(0, limit // 10))
+        if max_inserts <= 0:
+            return dense_backbone
+
+        dense_top_paths = {
+            p
+            for p in (self._resolve_path_for_result(item) for item in dense_backbone[:limit])
+            if p
+        }
+        insert_candidates: List[QueryResult] = []
+        candidate_sources = [
+            ("structure", structured, 2, 0.02),
+            ("keyword", keyword, max(1, min(3, limit // 3)), 0.01),
+        ]
+        seen_inserts: set[str] = set()
+        for source_name, source, rank_cap, base_score in candidate_sources:
+            for rank, item in enumerate(source, start=1):
+                if rank > rank_cap:
+                    break
+                if item.result_id in semantic_ids or item.result_id in seen_inserts:
+                    continue
+                path = self._resolve_path_for_result(item)
+                if source_name == "keyword" and path and path in dense_top_paths:
+                    continue
+                explain = dict(item.explain)
+                explain["guarded_insert"] = 1.0
+                explain[f"{source_name}_rank"] = float(rank)
+                insert_candidates.append(
+                    self._copy_result(item, score=base_score / float(rank), explain=explain)
+                )
+                seen_inserts.add(item.result_id)
+                if len(insert_candidates) >= max_inserts:
+                    break
+            if len(insert_candidates) >= max_inserts:
+                break
+
+        if not insert_candidates:
+            return dense_backbone
+
+        keep_n = max(1, limit - len(insert_candidates))
+        fused = [*dense_backbone[:keep_n], *insert_candidates, *dense_backbone[keep_n:]]
+        out: List[QueryResult] = []
+        seen: set[str] = set()
+        for item in fused:
+            if item.result_id in seen:
+                continue
+            seen.add(item.result_id)
+            out.append(item)
+        return out
+
+    @staticmethod
     def _truncate_text(text: str, max_code_chars: int) -> tuple[str, bool]:
         if len(text) <= max_code_chars:
             return text, False
@@ -263,7 +365,8 @@ class HybridRetrievalService:
             )
         version = embedding_version or self.default_embedding_version
 
-        def semantic_results() -> List[QueryResult]:
+        def semantic_results(limit: int | None = None) -> List[QueryResult]:
+            fetch_limit = max(1, int(limit if limit is not None else q.top_k))
             return [
                 QueryResult(
                     result_id=chunk_id,
@@ -272,7 +375,7 @@ class HybridRetrievalService:
                     explain={"semantic": score},
                     payload=self.store.fetch_chunk_metadata(chunk_id, include_content=False),
                 )
-                for chunk_id, score in self.embedding_pipeline.semantic_search(q.text, version, q.top_k)
+                for chunk_id, score in self.embedding_pipeline.semantic_search(q.text, version, fetch_limit)
             ]
 
         if q.mode == "structure":
@@ -291,14 +394,20 @@ class HybridRetrievalService:
                 max_code_chars,
             )
 
-        structured = self.store.symbol_exact(q.text, q.top_k) if self.store.supports_capability(CAP_FIND_ENTITY) else []
-        keyword = self.store.keyword_search(q.text, q.top_k)
-        semantic = semantic_results()
-
-        fused = (
-            self._rrf_fusion(structured, keyword, semantic)
-            if q.blend_strategy == "rrf"
-            else self._linear_fusion(structured, keyword, semantic)
+        retrieval_depth = q.top_k * 2 if q.blend_strategy == "dense_guarded" else q.top_k
+        structured = (
+            self.store.symbol_exact(q.text, retrieval_depth)
+            if self.store.supports_capability(CAP_FIND_ENTITY)
+            else []
         )
+        keyword = self.store.keyword_search(q.text, retrieval_depth)
+        semantic = semantic_results(retrieval_depth)
+
+        if q.blend_strategy == "rrf":
+            fused = self._rrf_fusion(structured, keyword, semantic)
+        elif q.blend_strategy == "dense_guarded":
+            fused = self._dense_guarded_fusion(structured, keyword, semantic, q.top_k)
+        else:
+            fused = self._linear_fusion(structured, keyword, semantic)
         reranked = self._rerank_with_test_depref(q, fused)
         return self._attach_code(reranked[: q.top_k], include_code, max_code_chars)
