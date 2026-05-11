@@ -57,6 +57,32 @@ Spring 主 commit：
 
 ## 1. 准备配置
 
+日常推荐直接使用大一统脚本。它会自动探测模型维度、生成 `models/<name>/config.json`、按需重建 DB、跑评测并汇总：
+
+```bash
+cd /data1/qadong/codeindex_java/hybrid_platform
+
+# 代码索引 / chunk 逻辑改过：加 --rebuild
+scripts/run_spring_eval.sh \
+  bge-code-v1 \
+  /data_nvme0/models/embedding/bge-code-v1 \
+  --rebuild
+
+# 只是重跑同一个模型或只换 embedding：不加 --rebuild
+scripts/run_spring_eval.sh \
+  bge-code-v1 \
+  /data_nvme0/models/embedding/bge-code-v1
+```
+
+默认参数：
+
+- DB：`var/spring-eval/index/spring-6ec2455e-ts-symbolctx.db`
+- API base：`http://118.196.65.175:8000/v1`
+- dataset：`/data1/qadong/codeindex_java/JAVA test/spring_framework_eval_v1_reviewed.verify.jsonl`
+- top-k：`5`、`10`
+
+下面是脚本背后的手动流程，排错时再看。
+
 每个模型一份配置，建议从 `config/default_config.json` 复制，只改 `embedding` 和 `vector`。
 
 必须确认：
